@@ -22,12 +22,14 @@ REPLICA_IDS = (
 
 class ReplicaDataset:
 
-    def __init__(self, seq_name) -> None:
+    def __init__(self, seq_name, mask_dir_name=None) -> None:
         self.seq_name = seq_name
         self.root = f'./data/replica/{seq_name}'
         self.rgb_dir = f'{self.root}/color'
         self.depth_dir = f'{self.root}/depth'
-        self.segmentation_dir = f'{self.root}/output/mask'
+        if mask_dir_name is None:
+            mask_dir_name = os.environ.get('MASK_DIR_NAME', 'mask')
+        self.segmentation_dir = f'{self.root}/output/{mask_dir_name}'
         self.object_dict_dir = f'{self.root}/output/object'
         self.point_cloud_path = f'{self.root}/{seq_name}_mesh.ply'
         self.mesh_path = self.point_cloud_path
