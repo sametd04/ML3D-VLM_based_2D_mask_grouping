@@ -5,7 +5,8 @@
 #
 #   ssh <you>@ml3d.vc.in.tum.de
 #   salloc --gpus=1
-#   cd /path/to/ML3D-VLM_based_2D_mask_grouping
+#   git clone https://github.com/sametd04/ML3D-VLM_based_2D_mask_grouping.git
+#   cd ML3D-VLM_based_2D_mask_grouping
 #   bash setup_env.sh
 #
 # It creates the conda env "maskclustering", installs PyTorch/pytorch3d/detectron2/CropFormer
