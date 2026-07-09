@@ -11,6 +11,16 @@ _RESPONSE_RE = re.compile(
     r"^\s*([01])\s*\n\s*(0(?:\.\d+)?|1(?:\.0+)?)\s*\n\s*(.+?)\s*$",
     re.DOTALL,
 )
+_LABELED_RESPONSE_RE = re.compile(
+    r"decision\s*:\s*([01](?:\.0+)?)"
+    r".*?confidence\s*:\s*(0(?:\.\d+)?|1(?:\.0+)?)"
+    r".*?reasoning\s*:\s*(.+?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_ONE_LINE_RESPONSE_RE = re.compile(
+    r"^\s*([01](?:\.0+)?)\s*[,;:\-]\s*(.+?)\s*$",
+    re.DOTALL,
+)
 
 
 class VLMPrediction(TypedDict):
@@ -40,23 +50,39 @@ def load_model(config: dict) -> tuple[Qwen3VLForConditionalGeneration, AutoProce
     return model, processor
 
 
-def parse_vlm_response(text: str) -> VLMPrediction:
-    """Parse the strict 3-line VLM output format into a VLMPrediction.
+def _prediction(decision: str, confidence: str, reasoning: str) -> VLMPrediction:
+    return VLMPrediction(
+        decision=int(float(decision)),
+        confidence=max(0.0, min(1.0, float(confidence))),
+        reasoning=reasoning.strip(),
+    )
 
-    Expected format:
+
+def parse_vlm_response(text: str) -> VLMPrediction:
+    """Parse the VLM output into a VLMPrediction.
+
+    Preferred format:
         Line 1: 1 or 0
         Line 2: float in [0.0, 1.0]
         Line 3: one sentence of reasoning
 
-    Falls back to decision=0 / confidence=0.0 on any parse failure and logs
-    the malformed response — never silently swallows errors.
+    Also accepts common near-misses, such as labeled answers or one-line
+    answers like "1.0, explanation".
     """
-    m = _RESPONSE_RE.match(text.strip())
-    if not m:
-        logger.warning("Malformed VLM response: %r", text)
-        return VLMPrediction(decision=0, confidence=0.0, reasoning="<parse error>")
-    return VLMPrediction(
-        decision=int(m.group(1)),
-        confidence=float(m.group(2)),
-        reasoning=m.group(3),
-    )
+    stripped = text.strip()
+
+    m = _RESPONSE_RE.match(stripped)
+    if m:
+        return _prediction(m.group(1), m.group(2), m.group(3))
+
+    m = _LABELED_RESPONSE_RE.search(stripped)
+    if m:
+        return _prediction(m.group(1), m.group(2), m.group(3))
+
+    m = _ONE_LINE_RESPONSE_RE.match(stripped)
+    if m:
+        decision = m.group(1)
+        return _prediction(decision, decision, m.group(2))
+
+    logger.warning("Malformed VLM response: %r", text)
+    return VLMPrediction(decision=0, confidence=0.0, reasoning="<parse error>")

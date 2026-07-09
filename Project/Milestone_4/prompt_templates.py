@@ -12,10 +12,15 @@ _EXPECTED_IMAGE_COUNTS: dict[ConditionType, int] = {
 }
 
 _OUTPUT_FORMAT = """
-Respond with exactly 3 lines and nothing else:
-Line 1: 1 if the two regions belong to the same physical object, 0 if they do not
-Line 2: your confidence as a float between 0.0 and 1.0
-Line 3: one sentence of reasoning"""
+
+Output format is strict. Respond with exactly 3 lines and nothing else.
+Do not write labels such as "Decision:" or "Confidence:".
+Do not use bullet points.
+Do not put multiple fields on one line.
+
+Line 1: 1 if the two regions belong to the same physical object, otherwise 0
+Line 2: your confidence as a decimal number between 0.0 and 1.0
+Line 3: one short sentence of reasoning"""
 
 _SYSTEM_PROMPTS: dict[ConditionType, str] = {
     "pair_only": (
@@ -41,9 +46,14 @@ If both region A and region B fall within that single candidate detection, they 
     ),
 }
 
-_DECISION_PROMPT = ("""Do region A and region B belong to the same physical object in this 3D scene?
-                    Remember: answer with exactly 3 lines: decision (1/0), confidence (float), reasoning (one sentence)."""
-                    )
+_DECISION_PROMPT = """Do region A and region B belong to the same physical object in this 3D scene?
+
+Answer with exactly 3 lines:
+1 or 0
+confidence decimal
+one short sentence
+
+Return no other text."""
 
 
 def _img(image: Image) -> dict:

@@ -1,0 +1,5 @@
+model_id: "Qwen/Qwen3-VL-2B-Instruct"
+attn_implementation: "sdpa"
+
+inference:
+  max_new_tokens: 64
