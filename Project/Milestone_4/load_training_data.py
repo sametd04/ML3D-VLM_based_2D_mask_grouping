@@ -18,6 +18,8 @@ Step 2 — render training samples (same environment):
     # pickle `samples` for the training/fine-tuning environment
 """
 
+from __future__ import annotations
+
 import argparse
 import itertools
 import logging
@@ -464,12 +466,21 @@ def build_pair_pool(
         mask_visible_threshold: τ_vis for Step-1 visibility.
     """
     # ReplicaDataset hardcodes ./data/replica/ relative to CWD. Resolve all
-    # caller-supplied paths to absolute before switching to the directory that
-    # contains data/replica/ (one level up from this file = Project/).
+    # caller-supplied paths to absolute before switching to MaskClustering's
+    # root, which contains the data/ symlink (same convention as
+    # build_qwen_candidates.py).
     masks_root = os.path.abspath(masks_root)
     rgb_root = os.path.abspath(rgb_root)
     out_dir = os.path.abspath(out_dir)
-    os.chdir(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    maskclustering_root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "MaskClustering")
+    )
+    if not os.path.isdir(os.path.join(maskclustering_root, "data", "replica")):
+        raise FileNotFoundError(
+            f"{maskclustering_root}/data/replica not found; "
+            "create the MaskClustering/data symlink first."
+        )
+    os.chdir(maskclustering_root)
 
     for scene in tqdm(scenes, desc="scenes", unit="scene"):
         logger.info("Starting scene: %s", scene)

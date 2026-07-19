@@ -40,8 +40,8 @@ pip install --upgrade pip --quiet
 echo "==> [3/6] Installing torch (cu124) then transformers stack"
 pip install torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu124
-pip install transformers accelerate "qwen-vl-utils==0.0.14"
-pip install pyyaml opencv-python pillow numpy tqdm scikit-learn
+pip install transformers accelerate peft "qwen-vl-utils==0.0.14"
+pip install pyyaml opencv-python-headless pillow numpy pandas tqdm scikit-learn
 
 echo "==> [4/6] Installing Jupyter kernel support"
 pip install ipykernel
