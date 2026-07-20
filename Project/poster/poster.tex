@@ -1,0 +1,287 @@
+% =====================================================================
+%  A0 landscape poster - TUM style
+%  "Can a Vision-Language Model Group 2D Masks into 3D Objects?"
+%  Machine Learning for 3D Geometry (SS 2026), TUM
+%
+%  Compile:  pdflatex poster.tex   (figures expected in ./figures/)
+% =====================================================================
+\documentclass[a0,landscape]{a0poster}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{sansmath}
+\sansmath
+
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{colortbl}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning}
+\usepackage{enumitem}
+\usepackage{geometry}
+\geometry{a0paper, landscape, margin=1.8cm}
+
+\pagestyle{empty}
+\parindent0pt
+
+% ------------------------------- colors ------------------------------
+\definecolor{tumblue}{HTML}{0065BD}
+\definecolor{tumdark}{HTML}{003359}
+\definecolor{tumlight}{HTML}{64A0C8}
+\definecolor{tumpale}{HTML}{E8F0F7}
+\definecolor{accent}{HTML}{E37222}
+\definecolor{accentpale}{HTML}{FDEEE2}
+\definecolor{bodygrey}{HTML}{333333}
+\definecolor{cardgrey}{HTML}{F4F6F8}
+
+\color{bodygrey}
+
+% --------------------------- box templates ---------------------------
+% white card with a centered navy banner overlapping its top edge
+\newtcolorbox{posterbox}[2][]{%
+  enhanced, breakable=false,
+  colback=white, colframe=tumdark, boxrule=1.6pt, arc=6mm,
+  left=12mm, right=12mm, top=16mm, bottom=6mm,
+  before skip=11mm, after skip=0mm,
+  attach boxed title to top center={yshift=-11mm},
+  boxed title style={colback=tumdark, colframe=tumdark, arc=4mm,
+                     left=18mm, right=18mm, top=4mm, bottom=4mm},
+  title={\Large\bfseries\textcolor{white}{#2}}, #1}
+
+% small helper: variant tag pill
+\newcommand{\pill}[2]{\tikz[baseline=-2.2mm]{\node[fill=#1, text=white,
+  font=\large\bfseries, rounded corners=2.5mm,
+  inner xsep=5mm, inner ysep=2.2mm]{#2};}}
+
+% flowchart node styles
+\tikzset{
+  flow/.style={rectangle, rounded corners=3.5mm, fill=tumlight, text=white,
+               font=\large\bfseries, minimum height=20mm, minimum width=52mm,
+               align=center, inner xsep=5mm},
+  flowarrow/.style={-{Latex[length=7mm]}, line width=2.2mm, draw=tumdark},
+}
+
+\begin{document}
+
+% =============================== HEADER ==============================
+\begin{tcolorbox}[enhanced, colback=tumdark, colframe=tumdark, arc=8mm,
+                  left=16mm, right=16mm, top=5mm, bottom=5mm]
+  \begin{minipage}[c]{0.80\linewidth}
+    {\Huge\bfseries\textcolor{white}%
+      {Can a Vision-Language Model Group 2D Masks into 3D Objects?}}\\[7mm]
+    {\LARGE\textcolor{tumlight}%
+      {VLM-based edge scoring and geometric-semantic fusion for 3D instance segmentation}}\\[7mm]
+    {\Large\textcolor{white}{\textbf{Samet Degirmenci \,\textperiodcentered\, Florian K.
+      \,\textperiodcentered\, Katerina Skotnicova \,\textperiodcentered\, Omar A.}}}\\[3mm]
+    {\large\textcolor{tumlight}{Machine Learning for 3D Geometry (SS 2026)
+      \,\textbar\, Technical University of Munich}}
+  \end{minipage}\hfill
+  \begin{minipage}[c]{0.17\linewidth}
+    \raggedleft
+    \begin{tcolorbox}[colback=white, colframe=white, arc=3mm, boxrule=0pt,
+                      left=2mm, right=2mm, top=2mm, bottom=2mm,
+                      width=52mm, halign=center]
+      \includegraphics[width=44mm]{figures/qr.png}\\[1mm]
+      {\small\textcolor{tumdark}{\textbf{Code}}}
+    \end{tcolorbox}
+
+    \vspace{6mm}
+    \raggedleft{\fontsize{48}{48}\selectfont\bfseries\textcolor{white}{TUM}}
+  \end{minipage}
+\end{tcolorbox}
+
+% ========================= THREE-COLUMN BODY =========================
+\vspace{-9mm}
+\noindent
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% COLUMN 1 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{minipage}[t]{0.318\linewidth}
+\vspace{0pt}
+
+\begin{posterbox}[before skip=0mm]{Motivation}
+  \begin{center}
+    \includegraphics[width=0.66\linewidth]{figures/masks_frame80.png}
+  \end{center}
+  {\normalsize\itshape Class-agnostic 2D masks (CropFormer) in one RGB-D frame
+   of Replica \textit{room0}.}\\[3mm]
+  \begin{itemize}[leftmargin=14mm, itemsep=2mm]
+    \item[\textcolor{tumblue}{\textbullet}] Goal: group per-frame
+      \textbf{2D instance masks} into consistent \textbf{3D objects}.
+    \item[\textcolor{tumblue}{\textbullet}] MaskClustering (CVPR'24)
+      solves this \textbf{purely geometrically} --- no semantics.
+    \item[\textcolor{tumblue}{\textbullet}] Can a vision-language model
+      (\textbf{Qwen3-VL}) judge ``same object?'' instead --- or in addition?
+    \item[\textcolor{accent}{\textbullet}] \textbf{We ablate two axes:}
+      the 2D mask backbone (CropFormer vs SAM\,1/SAM\,3) and the edge scorer
+      (geometry $\rightarrow$ VLM $\rightarrow$ \textcolor{accent}{\textbf{learned fusion}}).
+  \end{itemize}
+\end{posterbox}
+
+\begin{posterbox}{Method: One Pipeline, Three Edge Scorers}
+  \centering
+  \begin{tikzpicture}
+    \node[flow] (frames) {RGB-D frames\\[-1mm]{\normalsize Replica scenes}};
+    \node[flow, right=14mm of frames] (masks) {2D masks\\[-1mm]{\normalsize CropFormer / SAM}};
+    \node[flow, right=14mm of masks] (graph) {Mask graph\\[-1mm]{\normalsize 3D back-projection}};
+    \node[flow, fill=accent, below=16mm of graph, minimum width=110mm]
+      (score) {EDGE SCORING\\[-1mm]{\normalsize same object? $\rightarrow$ edge weight}};
+    \node[flow, fill=tumblue, left=14mm of score, minimum width=90mm]
+      (cluster) {Graph clustering\\[-1mm]{\normalsize connected components}};
+    \node[flow, fill=tumdark, below=16mm of cluster, minimum width=90mm]
+      (objects) {3D object instances};
+    \draw[flowarrow] (frames) -- (masks);
+    \draw[flowarrow] (masks) -- (graph);
+    \draw[flowarrow] (graph) -- (score);
+    \draw[flowarrow] (score) -- (cluster);
+    \draw[flowarrow] (cluster) -- (objects);
+  \end{tikzpicture}\\[7mm]
+  \begin{minipage}{0.96\linewidth}
+    \normalsize Masks become \textbf{graph nodes}; candidate pairs (3D overlap
+    $\geq\tau$) get an edge if the \textcolor{accent}{\textbf{edge score}}
+    passes a threshold. Connected components form 3D objects.
+    \textbf{We keep the pipeline fixed and swap only the edge scorer.}
+  \end{minipage}
+\end{posterbox}
+
+\end{minipage}\hfill
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% COLUMN 2 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{minipage}[t]{0.318\linewidth}
+\vspace{0pt}
+
+\begin{posterbox}[before skip=0mm]{Edge Scoring: Three Approaches}
+  \pill{tumlight}{1 \textperiodcentered\ GEOMETRIC (baseline)}\\[4mm]
+  {\normalsize \textbf{View consensus:} a mask pair is merged if enough frames that
+  observe both also contain them inside one mask (\textit{supporters /
+  observers}). Purely geometric --- fails on adjacent objects with high 3D
+  overlap.}\\[6mm]
+
+  \pill{tumblue}{2 \textperiodcentered\ SEMANTIC (Qwen3-VL)}\\[4mm]
+  \begin{center}
+    \includegraphics[width=0.78\linewidth]{figures/qwen_pair.png}
+  \end{center}
+  {\normalsize\itshape What the VLM sees: two views, one region outlined each
+  (A red, B blue).}\\[3mm]
+  {\normalsize The VLM answers \textbf{``same physical object?''} with a
+  confidence score, used directly as the edge weight. \textbf{Zero-shot} it
+  is over-conservative (too few edges, fragmented scenes); \textbf{LoRA
+  finetuning} on 5 held-out Replica scenes sharpens it, but raw VLM edges
+  stay too sparse to group instances alone.}\\[6mm]
+
+  \pill{accent}{3 \textperiodcentered\ LEARNED FUSION (MLP)}\\[4mm]
+  \begin{tcolorbox}[colback=accentpale, colframe=accent, boxrule=1.4pt,
+                    arc=4mm, left=8mm, right=8mm, top=6mm, bottom=6mm]
+    {\normalsize A small MLP ($2{\times}32$, ${\sim}1.3$k params) combines
+    \textbf{geometric features} (view consensus, \#observers, 3D IoU) with the
+    \textbf{Qwen confidence} into one edge probability. Trained on 6 scenes,
+    validated on 1, tested on \textit{room0}.}\\[4mm]
+    {\normalsize \textbf{Question:} does semantics add anything on top of
+    geometry? \textcolor{accent}{\textbf{On Replica, barely --- geometry
+    dominates.}}}
+  \end{tcolorbox}
+\end{posterbox}
+
+\begin{posterbox}{Summary \& Outlook}
+  \begin{itemize}[leftmargin=12mm, itemsep=2mm]
+    \item \textbf{CropFormer is the strongest mask backbone (M2):}
+      it beats SAM\,1 and SAM\,3 on downstream 3D AP, so all later
+      milestones build on CropFormer masks.
+    \item \textbf{The raw VLM signal is weak:} zero-shot and finetuned
+      Qwen edges give AP ${\approx}0.02$ --- too sparse to group 3D
+      instances on their own.
+    \item \textbf{Geometry drives the fusion MLP:} it reaches
+      baseline-level AP, but adding the Qwen score moves AP by ${<}0.01$
+      --- semantics adds little on top of geometry on Replica.
+  \end{itemize}
+  \vspace{2mm}
+  \begin{tcolorbox}[colback=tumlight!30!white, colframe=tumlight,
+                    boxrule=1.4pt, arc=4mm,
+                    left=8mm, right=8mm, top=5mm, bottom=5mm]
+    {\normalsize\textcolor{tumdark}{\textbf{KEY FINDING}\quad The fusion MLP
+    matches the geometric baseline but does not surpass it: on Replica the
+    VLM contributes almost no signal once view-consensus geometry is in the
+    model.}}\\[3mm]
+    {\normalsize\textcolor{tumdark}{\textbf{NEXT STEPS}\quad Stronger VLM
+    supervision \,\textperiodcentered\, projection-based single-image prompting
+    \,\textperiodcentered\, more scenes and larger VLMs.}}
+  \end{tcolorbox}
+\end{posterbox}
+
+\end{minipage}\hfill
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% COLUMN 3 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{minipage}[t]{0.318\linewidth}
+\vspace{0pt}
+
+\begin{posterbox}[before skip=0mm]{Results --- Replica room0 (class-agnostic AP)}
+  \begin{center}
+    \includegraphics[width=0.46\linewidth]{figures/ap_chart.png}
+  \end{center}
+  \vspace{0mm}
+  \begin{center}
+  \normalsize
+  \renewcommand{\arraystretch}{1.05}
+  \begin{tabular}{@{}l r r r@{}}
+    \toprule
+    \textbf{Edge scorer} & \textbf{AP} & \textbf{AP@50} & \textbf{AP@25}\\
+    \midrule
+    View consensus (baseline) & \textbf{0.149} & \textbf{0.305} & \textbf{0.489}\\
+    Qwen finetuned (LoRA)     & 0.020 & 0.027 & 0.150\\
+    MLP Qwen-only             & 0.020 & 0.036 & 0.132\\
+    MLP geometry-only         & 0.142 & 0.294 & \textbf{0.495}\\
+    \rowcolor{accentpale}
+    \textbf{Fusion MLP (geo + Qwen)} & 0.143 & 0.297 & 0.483\\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  \vspace{2mm}
+  {\normalsize\itshape The fusion MLP matches the baseline (AP 0.143 vs
+  0.149) but does not beat it; Qwen-only edges stay near zero. All variants
+  share the same clustering and CropFormer masks.}
+
+  \vspace{3mm}
+  \begin{center}
+  \normalsize
+  \renewcommand{\arraystretch}{1.0}
+  \begin{tabular}{@{}l r r r@{}}
+    \toprule
+    \textbf{Mask backbone (M2)} & \textbf{AP} & \textbf{AP@50} & \textbf{AP@25}\\
+    \midrule
+    \rowcolor{tumpale}
+    \textbf{CropFormer} & \textbf{0.149} & \textbf{0.305} & \textbf{0.489}\\
+    SAM\,3 (conf 0.25)  & 0.123 & 0.224 & 0.370\\
+    SAM\,1 (ViT-H)      & 0.061 & 0.107 & 0.222\\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+  \vspace{2mm}
+  {\normalsize\itshape Same geometric pipeline, different 2D masks.
+  CropFormer's class-agnostic masks give the best 3D AP, so all later
+  milestones use them.}
+\end{posterbox}
+
+\begin{posterbox}{Predicted 3D Instances}
+  \newcommand{\rlabel}[2]{\tikz[baseline]{\node[fill=#1, text=white,
+    font=\normalsize\bfseries, rounded corners=2mm,
+    inner xsep=4mm, inner ysep=1.8mm]{#2};}}
+  \begin{center}
+    \begin{tabular}{@{}c@{\hspace{8mm}}c@{}}
+      \rlabel{tumdark}{Baseline (CropFormer)} & \rlabel{tumdark}{SAM\,3 masks}\\[2mm]
+      \includegraphics[width=0.36\linewidth]{figures/baseline.png} &
+      \includegraphics[width=0.36\linewidth]{figures/sam3.png}\\[4mm]
+      \rlabel{tumdark}{Qwen finetuned} & \rlabel{accent}{Fusion MLP}\\[2mm]
+      \includegraphics[width=0.36\linewidth]{figures/finetuned.png} &
+      \includegraphics[width=0.36\linewidth]{figures/fused.png}\\
+    \end{tabular}
+  \end{center}
+  \vspace{2mm}
+  {\normalsize\itshape One color per predicted instance, same viewpoint.
+  SAM\,3 masks over-segment surfaces (walls, floor) into large slabs;
+  CropFormer + geometry recover cleaner objects, and the fused MLP predicts
+  100 instances --- closest to the true count.}
+\end{posterbox}
+
+\end{minipage}
+
+\end{document}
