@@ -57,14 +57,36 @@ def convert(input_path: Path, scene: str | None) -> pd.DataFrame:
     return df
 
 
+def merge_with_candidates(scores: pd.DataFrame, candidates_path: Path) -> pd.DataFrame:
+    """Join classifier probabilities onto the candidate CSV so the output keeps
+    the geometric feature and GT label columns required by fusion_mlp.py."""
+    candidates = pd.read_csv(candidates_path)
+    keys = ["frame_a", "mask_a", "frame_b", "mask_b"]
+    merged = candidates.merge(scores, on=keys, how="left")
+    n_missing = int(merged["qwen_same_instance_score"].isna().sum())
+    if n_missing:
+        print(f"Warning: {n_missing}/{len(merged)} candidate pairs have no classifier score; dropping them.")
+        merged = merged.dropna(subset=["qwen_same_instance_score"])
+    return merged
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--input", type=Path, required=True, help="JSON from fine_tuning.py score.")
     parser.add_argument("--scene", default=None, help="Optional scene filter (JSON may mix scenes).")
     parser.add_argument("--output", type=Path, required=True, help="CSV for run_qwen_clustering.py --scores.")
+    parser.add_argument(
+        "--candidates",
+        type=Path,
+        default=None,
+        help="Optional candidate CSV (build_qwen_candidates.py) to merge scores into, "
+        "keeping geometric features and GT labels for fusion_mlp.py.",
+    )
     args = parser.parse_args()
 
     df = convert(args.input, args.scene)
+    if args.candidates is not None:
+        df = merge_with_candidates(df, args.candidates)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output, index=False)
     print(f"Wrote {len(df)} pair scores to {args.output}")
