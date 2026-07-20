@@ -32,7 +32,8 @@ for variant in kate_raw mlp_geometry mlp_qwen mlp_fused; do
     --iterative --thresholds 0.9,0.8,0.7,0.6,0.5 --min-pairs 1
   echo "--- AP (iterative): $variant ---"
   cd $REPO/MaskClustering
-  python -m evaluation.evaluate --pred_path data/prediction/iter_${variant}_class_agnostic
+  python -m evaluation.evaluate --pred_path data/prediction/iter_${variant}_class_agnostic \
+    --gt_path data/replica/ground_truth --dataset replica --no_class
   cd $REPO
 done
 
