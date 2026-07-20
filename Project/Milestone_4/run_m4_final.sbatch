@@ -41,7 +41,7 @@ test -f $KATE/Project/Milestone_4/fine_tuning.py
 test -f $ADAPTER/adapter_model.safetensors
 
 echo "=== STEP 1: or_rule candidates for 8 scenes (maskclustering env) ==="
-source $BASE/miniconda3/etc/profile.d/conda.sh
+source /rhome/go93coc/miniconda3/etc/profile.d/conda.sh
 conda activate maskclustering
 cd $REPO
 for scene in $ALL_SCENES; do
@@ -53,7 +53,7 @@ done
 conda deactivate
 
 echo "=== STEP 2: candidates -> pair pools ==="
-source $BASE/qwen_env/bin/activate
+source $REPO/qwen_env/bin/activate
 for scene in $ALL_SCENES; do
   python $M3/candidates_to_pool.py \
     --candidates $CAND/${scene}_qwen_candidates.csv \

@@ -20,7 +20,7 @@ REPO=$BASE/ML3D-VLM_based_2D_mask_grouping
 SCORES=$REPO/Project/Milestone_3/data/qwen_scores_final
 TEST_SCENE="room0"
 
-source $BASE/miniconda3/etc/profile.d/conda.sh
+source /rhome/go93coc/miniconda3/etc/profile.d/conda.sh
 conda activate maskclustering
 cd $REPO
 
