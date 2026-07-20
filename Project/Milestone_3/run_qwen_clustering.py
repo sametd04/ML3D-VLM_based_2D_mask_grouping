@@ -121,6 +121,7 @@ def iterative_qwen_clustering(
     scores: pd.DataFrame,
     thresholds: list[float],
     min_pairs: int,
+    min_coverage: float = 0.3,
 ):
     """MaskClustering-style iterative clustering driven by precomputed pair scores.
 
@@ -153,7 +154,23 @@ def iterative_qwen_clustering(
             where=pair_counts > 0,
         )
 
-        adjacency = (mean_scores >= threshold) & (pair_counts >= min_pairs)
+        # Coverage guard (analog of the baseline's observer_num_threshold): a
+        # single noisy pair must not merge two large clusters, so a minimum
+        # fraction of the possible cross pairs has to be scored candidates.
+        sizes = membership.sum(axis=1)
+        possible_pairs = np.outer(sizes, sizes)
+        coverage = np.divide(
+            pair_counts,
+            np.maximum(possible_pairs, 1.0),
+            out=np.zeros_like(pair_counts),
+            where=possible_pairs > 0,
+        )
+
+        adjacency = (
+            (mean_scores >= threshold)
+            & (pair_counts >= min_pairs)
+            & (coverage >= min_coverage)
+        )
         np.fill_diagonal(adjacency, False)
         graph = nx.from_numpy_array(adjacency)
         nodes = merge_nodes(iteration, nodes, graph)
@@ -192,6 +209,13 @@ def main() -> None:
         type=int,
         default=1,
         help="Minimum number of scored member pairs required to link two clusters (--iterative).",
+    )
+    parser.add_argument(
+        "--min-coverage",
+        type=float,
+        default=0.3,
+        help="Minimum fraction of cross pairs that must be scored candidates "
+        "to link two clusters (--iterative).",
     )
     parser.add_argument("--debug", action="store_true")
     args_cli = parser.parse_args()
@@ -239,7 +263,7 @@ def main() -> None:
             if args_cli.iterative:
                 thresholds = [float(t) for t in args_cli.thresholds.split(",") if t.strip()]
                 object_list = iterative_qwen_clustering(
-                    nodes, scores, thresholds, args_cli.min_pairs
+                    nodes, scores, thresholds, args_cli.min_pairs, args_cli.min_coverage
                 )
             else:
                 graph = build_qwen_graph(nodes, scores, args_cli.qwen_score_threshold)
