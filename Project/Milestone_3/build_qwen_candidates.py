@@ -106,6 +106,8 @@ def passes_overlap_filter(
     overlap: dict[str, float | int],
     threshold: float,
     mode: str,
+    view_consensus_score: float = 0.0,
+    vc_threshold: float = 0.6,
 ) -> bool:
     if mode == "iou":
         return float(overlap["depth_iou"]) >= threshold
@@ -114,6 +116,16 @@ def passes_overlap_filter(
             float(overlap["depth_iou"]) >= threshold
             or float(overlap["overlap_a_to_b"]) >= threshold
             or float(overlap["overlap_b_to_a"]) >= threshold
+        )
+    if mode == "or_rule":
+        # Recall-oriented filter: geometric overlap OR a relaxed view-consensus
+        # criterion (below MaskClustering's usual 0.8-0.9 merge threshold), so
+        # positives without strong 3D overlap still reach the Qwen scorer.
+        return (
+            float(overlap["depth_iou"]) >= threshold
+            or float(overlap["overlap_a_to_b"]) >= threshold
+            or float(overlap["overlap_b_to_a"]) >= threshold
+            or view_consensus_score >= vc_threshold
         )
     raise ValueError(f"Unknown overlap filter mode: {mode}")
 
@@ -203,12 +215,19 @@ def build_candidates(args: argparse.Namespace) -> tuple[list[dict], dict]:
         points_a = mask_point_clouds.get(f"{frame_a}_{mask_a}", set())
         points_b = mask_point_clouds.get(f"{frame_b}_{mask_b}", set())
         overlap = compute_overlap(points_a, points_b)
-        if not passes_overlap_filter(overlap, args.depth_overlap_threshold, args.filter_mode):
-            continue
 
         observer_num = bool_float(torch.dot(visible_frames[idx_a], visible_frames[idx_b]))
         supporter_num = bool_float(torch.dot(contained_masks[idx_a], contained_masks[idx_b]))
         view_consensus_score = supporter_num / (observer_num + 1e-7)
+
+        if not passes_overlap_filter(
+            overlap,
+            args.depth_overlap_threshold,
+            args.filter_mode,
+            view_consensus_score=view_consensus_score,
+            vc_threshold=args.vc_threshold,
+        ):
+            continue
 
         gt_a = gt_by_index.get(idx_a)
         gt_b = gt_by_index.get(idx_b)
@@ -248,6 +267,7 @@ def build_candidates(args: argparse.Namespace) -> tuple[list[dict], dict]:
         "candidate_pairs_kept": int(kept_pairs),
         "depth_overlap_threshold": float(args.depth_overlap_threshold),
         "filter_mode": args.filter_mode,
+        "vc_threshold": float(args.vc_threshold),
         "include_same_frame": bool(args.include_same_frame),
     }
     return rows, metadata
@@ -296,12 +316,19 @@ def main() -> None:
     )
     parser.add_argument(
         "--filter-mode",
-        choices=["iou", "any_asymmetric"],
+        choices=["iou", "any_asymmetric", "or_rule"],
         default="iou",
         help=(
             "iou: keep only if intersection/union passes threshold. "
-            "any_asymmetric: also keep if either directional overlap passes."
+            "any_asymmetric: also keep if either directional overlap passes. "
+            "or_rule: any_asymmetric OR view consensus >= --vc-threshold."
         ),
+    )
+    parser.add_argument(
+        "--vc-threshold",
+        type=float,
+        default=0.6,
+        help="View consensus threshold for the or_rule filter mode.",
     )
     parser.add_argument("--output", type=Path, default=None, help="Output CSV path.")
     parser.add_argument(
