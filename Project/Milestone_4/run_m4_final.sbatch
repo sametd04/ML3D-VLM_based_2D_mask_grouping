@@ -34,14 +34,11 @@ VAL_SCENE="office4"
 TEST_SCENE="room0"
 ALL_SCENES="$TRAIN_SCENES $VAL_SCENE $TEST_SCENE"
 
-cd $REPO && git pull origin flo/SAM
-
-# Kate branch checkout (code only; data comes from the main repo)
-if [ ! -d "$KATE" ]; then
-  git clone --branch kate_lora_fine_tuning https://github.com/sametd04/ML3D-VLM_based_2D_mask_grouping $KATE
-else
-  cd $KATE && git pull origin kate_lora_fine_tuning
-fi
+# Repo and Kate's branch checkout are rsynced from the local machine
+# (cluster copy has no .git). Fail fast if either is missing.
+test -f $M3/candidates_to_pool.py
+test -f $KATE/Project/Milestone_4/fine_tuning.py
+test -f $ADAPTER/adapter_model.safetensors
 
 echo "=== STEP 1: or_rule candidates for 8 scenes (maskclustering env) ==="
 source $BASE/miniconda3/etc/profile.d/conda.sh
