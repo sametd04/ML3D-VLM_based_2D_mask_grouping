@@ -7,11 +7,13 @@
 # need to run `pip install -r requirements.txt` by hand.
 
 # --- MaskClustering core ---
-numpy
+# numpy is capped below 2 because pytorch3d and detectron2 are built against the
+# NumPy 1.x ABI here, and opencv-python 4.10+ requires numpy>=2, so it is capped too.
+numpy<2
 tqdm
 open3d
 networkx
-opencv-python
+opencv-python<4.10
 pyviz3d
 pypng
 pillow

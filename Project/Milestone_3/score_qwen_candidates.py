@@ -32,7 +32,6 @@ def find_repo_root(start: Path | None = None) -> Path:
 
 REPO_ROOT = find_repo_root()
 MILESTONE_3 = REPO_ROOT / "Project" / "Milestone_3"
-MILESTONE_3 = REPO_ROOT / "Project" / "Milestone_3"
 
 if str(MILESTONE_3) not in sys.path:
     sys.path.insert(0, str(MILESTONE_3))
