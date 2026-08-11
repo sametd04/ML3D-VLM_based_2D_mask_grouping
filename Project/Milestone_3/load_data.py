@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import logging
 import os
 import sys
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +17,11 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image as PILImage
+
+# "outline": region drawn as a colored contour on the full RGB frame (current default).
+# "filled": region highlighted with a semi-transparent color fill directly on the RGB frame.
+# "raw_mask": not yet implemented -- see render_pair().
+RenderMode = Literal["outline", "filled", "raw_mask"]
 
 
 @dataclass
@@ -164,73 +167,49 @@ def _draw_outline(frame: np.ndarray, mask: np.ndarray, color: tuple, thickness: 
     return out
 
 
+def _draw_highlight(frame: np.ndarray, mask: np.ndarray, color: tuple, alpha: float) -> np.ndarray:
+    """Return a copy of frame with a semi-transparent color fill over a binary mask region."""
+    out = frame.copy()
+    color_arr = np.array(color, dtype=np.float32)
+    out[mask] = ((1 - alpha) * out[mask].astype(np.float32) + alpha * color_arr).astype(np.uint8)
+    return out
+
+
 def render_pair(
     frame_a: FrameView,
     mask_id_a: int,
     frame_b: FrameView,
     mask_id_b: int,
     thickness: int = 1,
-) -> tuple[PILImage.Image, PILImage.Image]:
-    """pair_only — each mask outlined on its own frame.
+    render_mode: RenderMode = "outline",
+    alpha: float = 0.4,
+) -> tuple[PILImage.Image, ...]:
+    """pair_only — each mask rendered on its own frame.
 
     Args:
-        frame_a:    FrameView containing mask A; rgb must not be None.
-        mask_id_a:  Key into frame_a.masks for region A (outlined red).
-        frame_b:    FrameView containing mask B; rgb must not be None.
-        mask_id_b:  Key into frame_b.masks for region B (outlined blue).
-        thickness:  Contour line width in pixels.
+        frame_a:     FrameView containing mask A; rgb must not be None.
+        mask_id_a:   Key into frame_a.masks for region A.
+        frame_b:     FrameView containing mask B; rgb must not be None.
+        mask_id_b:   Key into frame_b.masks for region B.
+        thickness:   Contour line width in pixels (outline mode only).
+        render_mode: "outline" draws a colored contour on the frame; "filled"
+                     highlights the region with a semi-transparent color fill.
+        alpha:       Fill opacity in [0, 1] (filled mode only).
 
     Returns:
-        (view_a, view_b): view_a has mask A outlined red; view_b has mask B outlined blue.
+        (view_a, view_b) — mask A red, mask B blue; outlined or filled per render_mode.
     """
     if frame_a.rgb is None or frame_b.rgb is None:
         raise ValueError("FrameView.rgb must not be None for rendering.")
+    if render_mode == "raw_mask":
+        raise NotImplementedError("raw_mask rendering is not yet implemented")
+    if render_mode == "filled":
+        view_a = PILImage.fromarray(_draw_highlight(frame_a.rgb, frame_a.masks[mask_id_a].binary_mask, color=(255, 0, 0), alpha=alpha))
+        view_b = PILImage.fromarray(_draw_highlight(frame_b.rgb, frame_b.masks[mask_id_b].binary_mask, color=(0, 0, 255), alpha=alpha))
+        return view_a, view_b
     view_a = PILImage.fromarray(_draw_outline(frame_a.rgb, frame_a.masks[mask_id_a].binary_mask, color=(255, 0, 0), thickness=thickness))
     view_b = PILImage.fromarray(_draw_outline(frame_b.rgb, frame_b.masks[mask_id_b].binary_mask, color=(0, 0, 255), thickness=thickness))
     return view_a, view_b
-
-
-def _render_candidate_view(
-    observer: FrameView,
-    candidate_id: int,
-    thickness: int = 1,
-) -> PILImage.Image:
-    """pair_with_candidate — observer frame with one candidate detection outlined green.
-
-    Args:
-        observer:      FrameView where both masks are visible; rgb must not be None.
-        candidate_id:  Key into observer.masks for the candidate detection.
-        thickness:     Contour line width in pixels.
-
-    Returns:
-        PIL RGB Image with the single candidate outlined green.
-    """
-    if observer.rgb is None:
-        raise ValueError("FrameView.rgb must not be None for rendering.")
-    return PILImage.fromarray(
-        _draw_outline(observer.rgb, observer.masks[candidate_id].binary_mask, color=(0, 200, 0), thickness=thickness)
-    )
-
-
-def _render_context_view(
-    observer: FrameView,
-    thickness: int = 1,
-) -> PILImage.Image:
-    """pair_with_context — observer frame with all detected masks outlined white.
-
-    Args:
-        observer:  FrameView where both masks are visible; rgb must not be None.
-        thickness: Contour line width in pixels.
-
-    Returns:
-        PIL RGB Image with every mask in observer.masks outlined white.
-    """
-    if observer.rgb is None:
-        raise ValueError("FrameView.rgb must not be None for rendering.")
-    context = observer.rgb
-    for region in observer.masks.values():
-        context = _draw_outline(context, region.binary_mask, color=(0, 200, 0), thickness=thickness)
-    return PILImage.fromarray(context)
 
 
 @dataclass
@@ -242,18 +221,16 @@ class RenderedSample:
     mask_id_a: int
     frame_b: FrameView
     mask_id_b: int
-    observer: Optional[FrameView] = None  # required for pair_with_context / pair_with_candidate
-    candidate_id: Optional[int] = None    # required for pair_with_candidate
     thickness: int = 1
+    render_mode: RenderMode = "outline"
+    alpha: float = 0.4
 
     def render(self) -> list[PILImage.Image]:
-        """Render and return the image list for build_prompt(), based on condition."""
-        view_a, view_b = render_pair(self.frame_a, self.mask_id_a, self.frame_b, self.mask_id_b, self.thickness)
-        if self.condition == "pair_only":
-            return [view_a, view_b]
-        if self.condition == "pair_with_candidate" and self.observer is not None and self.candidate_id is not None:
-            return [view_a, view_b, _render_candidate_view(self.observer, self.candidate_id, self.thickness)]
-        if self.condition == "pair_with_context" and self.observer is not None:
-            return [view_a, view_b, _render_context_view(self.observer, self.thickness)]
-        raise ValueError(f"Condition {self.condition!r}: missing required observer / candidate_id.")
+        """Render and return the image list for build_prompt(), based on render_mode."""
+        if self.condition != "pair_only":
+            raise ValueError(f"Unknown condition {self.condition!r}. Expected 'pair_only'.")
+        pair_views = render_pair(
+            self.frame_a, self.mask_id_a, self.frame_b, self.mask_id_b, self.thickness, self.render_mode, self.alpha
+        )
+        return list(pair_views)
 

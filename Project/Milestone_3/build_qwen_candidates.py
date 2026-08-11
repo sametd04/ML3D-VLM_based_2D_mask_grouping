@@ -9,11 +9,13 @@ It does not import transformers or Qwen. The output CSV can be consumed later
 by a Qwen scoring script in a separate environment.
 
 Example:
-    python Project/Milestone_4/build_qwen_candidates.py \
+    python Project/Milestone_3/build_qwen_candidates.py \
         --scene room0 \
         --config replica \
         --depth-overlap-threshold 0.05 \
-        --output Project/Milestone_4/data/candidates/room0_qwen_candidates.csv
+        --train \
+        --negative-ratio 2 \
+        --output Project/Milestone_3/data/candidates/room0_qwen_candidates.csv
 """
 
 from __future__ import annotations
@@ -134,6 +136,43 @@ def bool_float(value: torch.Tensor) -> float:
     return float(value.detach().cpu().item())
 
 
+def nonnegative_int(value: str) -> int:
+    """Parse a non-negative integer for argparse."""
+    try:
+        parsed = int(value)
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError("value must be a non-negative integer")
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be a non-negative integer")
+    return parsed
+
+
+def candidate_strength(row: dict) -> float:
+    """Rank fallback candidates by their strongest consensus/overlap signal."""
+    return max(
+        float(row["view_consensus_score"]),
+        float(row["depth_iou"]),
+        float(row["overlap_a_to_b"]),
+        float(row["overlap_b_to_a"]),
+    )
+
+
+def select_negatives(
+    passing: list[dict], rejected: list[dict], target: int
+) -> tuple[list[dict], int]:
+    """Select exactly ``target`` negatives when available, preferring filtered pairs.
+
+    Both pools are ordered by their strongest view-consensus or overlap score. Rejected
+    negatives are only used when the overlap filter did not leave enough candidates.
+    """
+    passing = sorted(passing, key=candidate_strength, reverse=True)
+    rejected = sorted(rejected, key=candidate_strength, reverse=True)
+    selected = passing[:target]
+    fallback_count = min(max(target - len(selected), 0), len(rejected))
+    selected.extend(rejected[:fallback_count])
+    return selected, fallback_count
+
+
 def build_candidates(args: argparse.Namespace) -> tuple[list[dict], dict]:
     config = load_config(args.config)
     config.update(
@@ -198,8 +237,14 @@ def build_candidates(args: argparse.Namespace) -> tuple[list[dict], dict]:
             gt_by_index[idx] = majority_gt_instance(point_ids, gt_ids, args.min_labeled_points)
 
     rows: list[dict] = []
+    passing_negatives: list[dict] = []
+    rejected_negatives: list[dict] = []
     total_pairs = 0
     kept_pairs = 0
+    gt_positive_considered = 0
+    gt_negative_considered = 0
+    gt_positive_kept = 0
+    gt_negative_kept = 0
     iterator = combinations(valid_indices, 2)
     if args.debug:
         pair_count = len(valid_indices) * (len(valid_indices) - 1) // 2
@@ -212,6 +257,18 @@ def build_candidates(args: argparse.Namespace) -> tuple[list[dict], dict]:
             continue
 
         total_pairs += 1
+
+        # Resolved before the overlap filter (not after) so pairs the filter drops are
+        # still counted by GT label -- that's what lets the summary report what fraction
+        # of positives/negatives the overlap filter is throwing away.
+        gt_a = gt_by_index.get(idx_a)
+        gt_b = gt_by_index.get(idx_b)
+        gt_label: Optional[int] = int(gt_a == gt_b) if gt_a is not None and gt_b is not None else None
+        if gt_label == 1:
+            gt_positive_considered += 1
+        elif gt_label == 0:
+            gt_negative_considered += 1
+
         points_a = mask_point_clouds.get(f"{frame_a}_{mask_a}", set())
         points_b = mask_point_clouds.get(f"{frame_b}_{mask_b}", set())
         overlap = compute_overlap(points_a, points_b)
@@ -220,40 +277,60 @@ def build_candidates(args: argparse.Namespace) -> tuple[list[dict], dict]:
         supporter_num = bool_float(torch.dot(contained_masks[idx_a], contained_masks[idx_b]))
         view_consensus_score = supporter_num / (observer_num + 1e-7)
 
-        if not passes_overlap_filter(
+        passes_filter = passes_overlap_filter(
             overlap,
             args.depth_overlap_threshold,
             args.filter_mode,
             view_consensus_score=view_consensus_score,
             vc_threshold=args.vc_threshold,
-        ):
-            continue
-
-        gt_a = gt_by_index.get(idx_a)
-        gt_b = gt_by_index.get(idx_b)
-        same_instance_label = ""
-        if gt_a is not None and gt_b is not None:
-            same_instance_label = int(gt_a == gt_b)
-
-        kept_pairs += 1
-        rows.append(
-            {
-                "scene": args.scene,
-                "frame_a": frame_a,
-                "mask_a": mask_a,
-                "frame_b": frame_b,
-                "mask_b": mask_b,
-                "global_mask_idx_a": idx_a,
-                "global_mask_idx_b": idx_b,
-                **overlap,
-                "num_observers": observer_num,
-                "num_supporters": supporter_num,
-                "view_consensus_score": view_consensus_score,
-                "gt_instance_a": "" if gt_a is None else gt_a,
-                "gt_instance_b": "" if gt_b is None else gt_b,
-                "same_instance_label": same_instance_label,
-            }
         )
+
+        row = {
+            "scene": args.scene,
+            "frame_a": frame_a,
+            "mask_a": mask_a,
+            "frame_b": frame_b,
+            "mask_b": mask_b,
+            "global_mask_idx_a": idx_a,
+            "global_mask_idx_b": idx_b,
+            **overlap,
+            "num_observers": observer_num,
+            "num_supporters": supporter_num,
+            "view_consensus_score": view_consensus_score,
+            "gt_instance_a": "" if gt_a is None else gt_a,
+            "gt_instance_b": "" if gt_b is None else gt_b,
+            "same_instance_label": "" if gt_label is None else gt_label,
+        }
+
+        # Keep rejected labeled negatives available for ratio backfilling. Other
+        # rejected pairs retain the original behavior and are discarded.
+        if gt_label == 0:
+            (passing_negatives if passes_filter else rejected_negatives).append(row)
+            if passes_filter:
+                gt_negative_kept += 1
+        elif passes_filter:
+            rows.append(row)
+            if gt_label == 1:
+                gt_positive_kept += 1
+
+        if passes_filter:
+            kept_pairs += 1
+
+    mode = getattr(args, "mode", "eval")
+    negative_ratio = getattr(args, "negative_ratio", None)
+    negative_fallback_count = 0
+    negatives_before_ratio = len(passing_negatives)
+    target_negatives: Optional[int] = None
+    if mode == "eval" or negative_ratio is None:
+        selected_negatives = passing_negatives
+    else:
+        target_negatives = gt_positive_kept * negative_ratio
+        selected_negatives, negative_fallback_count = select_negatives(
+            passing_negatives, rejected_negatives, target_negatives
+        )
+        gt_negative_kept = len(selected_negatives)
+    rows.extend(selected_negatives)
+    kept_pairs = len(rows)
 
     metadata = {
         "scene": args.scene,
@@ -265,10 +342,24 @@ def build_candidates(args: argparse.Namespace) -> tuple[list[dict], dict]:
         "undersegmented_masks": int(len(undersegment_mask_ids)),
         "total_pairs_considered": int(total_pairs),
         "candidate_pairs_kept": int(kept_pairs),
+        "gt_positive_pairs_considered": int(gt_positive_considered),
+        "gt_positive_pairs_kept": int(gt_positive_kept),
+        "gt_positive_kept_pct": round(100.0 * gt_positive_kept / gt_positive_considered, 2) if gt_positive_considered else None,
+        "gt_negative_pairs_considered": int(gt_negative_considered),
+        "gt_negative_pairs_kept": int(gt_negative_kept),
+        "gt_negative_kept_pct": round(100.0 * gt_negative_kept / gt_negative_considered, 2) if gt_negative_considered else None,
         "depth_overlap_threshold": float(args.depth_overlap_threshold),
         "filter_mode": args.filter_mode,
         "vc_threshold": float(args.vc_threshold),
         "include_same_frame": bool(args.include_same_frame),
+        "mode": mode,
+        "negative_ratio": negative_ratio,
+        "gt_negatives_passing_filter": int(negatives_before_ratio),
+        "gt_negatives_added_by_ranked_fallback": int(negative_fallback_count),
+        "gt_negatives_target": target_negatives,
+        "gt_negatives_target_shortfall": (
+            0 if target_negatives is None else max(target_negatives - len(selected_negatives), 0)
+        ),
     }
     return rows, metadata
 
@@ -330,6 +421,37 @@ def main() -> None:
         default=0.6,
         help="View consensus threshold for the or_rule filter mode.",
     )
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--train",
+        dest="mode",
+        action="store_const",
+        const="train",
+        help="Balance negatives and backfill filtered-out negatives when necessary.",
+    )
+    mode_group.add_argument(
+        "--eval",
+        dest="mode",
+        action="store_const",
+        const="eval",
+        help="Keep only candidates that pass the filter (default).",
+    )
+    parser.set_defaults(mode="eval")
+    parser.add_argument(
+        "--negative-ratio",
+        type=nonnegative_int,
+        default=None,
+        metavar="N",
+        help=(
+            "In --train mode, number of GT-labeled negatives to keep per filtered "
+            "positive. Default: None, meaning no cap is applied and all "
+            "filter-passing negatives are kept (same negative selection as --eval "
+            "mode). Set to an integer to cap negatives per positive instead: "
+            "negatives passing the filter are preferred, and if there are too few, "
+            "rejected negatives with the highest view-consensus or geometric-overlap "
+            "score are added. Ignored in --eval mode."
+        ),
+    )
     parser.add_argument("--output", type=Path, default=None, help="Output CSV path.")
     parser.add_argument(
         "--frames",
@@ -367,7 +489,7 @@ def main() -> None:
         output_path = (
             REPO_ROOT
             / "Project"
-            / "Milestone_4"
+            / "Milestone_3"
             / "data"
             / "candidates"
             / f"{args.scene}_qwen_candidates.csv"

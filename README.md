@@ -30,7 +30,90 @@ The checkpoint lives in a **gated** HuggingFace dataset, so this step can't be s
 2. Create a token at https://huggingface.co/settings/tokens
 3. On the cluster, run `hf auth login` and paste the token
 
+The CropFormer/Mask2Former weights used by the project are expected at:
+
+```text
+checkpoints/Mask2Former_hornet_3x_576d0b.pth
+```
+
+The `checkpoints/` directory should remain inside the repository working
+directory because the CropFormer notebooks and scripts load the model from
+this local path. The checkpoint is approximately 883 MB and is a local runtime
+dependency, not source code. Keep it on every machine or cluster workspace on
+which CropFormer is executed, but do not commit or upload the weight file to
+Git. After cloning the repository, create `checkpoints/` and place the
+downloaded checkpoint there if it is not downloaded automatically.
+
+The expected layout is:
+
+```text
+ML3D-VLM_based_2D_mask_grouping/
+|-- checkpoints/
+|   |-- Mask2Former_hornet_3x_576d0b.pth
+|   |-- qwen/
+|   |   `-- checkpoint-625/
+|   |       |-- adapter_config.json
+|   |       `-- adapter_model.safetensors
+|   `-- fusion_mlp/
+|       `-- fusion_mlp_fused.pt
+|-- MaskClustering/
+|-- Project/
+`-- README.md
+```
+
 If you skip this, you can still run the pipeline with `MASK_PREDICTOR = 'sam'` in the notebook, using pre-generated SAM masks instead.
+
+### 3.1 Project-trained Qwen and Fusion-MLP checkpoints
+
+In addition to the public CropFormer weights, the later milestones use two
+checkpoints trained within this project. These are internal project artifacts
+and currently do not have a public download location. Obtain them from a team
+member or regenerate them with the corresponding Milestone 4 training code.
+
+#### Fine-tuned Qwen3-VL adapter
+
+The Qwen checkpoint contains the LoRA adapters for the final eight vision
+blocks, the adapted vision patch merger, and the trained binary classification
+head. Store the complete training checkpoint at:
+
+```text
+checkpoints/qwen/checkpoint-625/
+```
+
+For inference, the essential files are:
+
+```text
+checkpoints/qwen/checkpoint-625/adapter_config.json
+checkpoints/qwen/checkpoint-625/adapter_model.safetensors
+```
+
+Keep the remaining files (`optimizer.pt`, `scheduler.pt`, `trainer_state.json`,
+`training_args.bin`, and `rng_state.pth`) if training may be resumed. They are
+not required for inference alone.
+
+#### Fusion MLP
+
+The Fusion MLP combines the fine-tuned Qwen same-instance score with geometric
+features such as view consensus, observer count, depth IoU, and directional
+overlap. Store its checkpoint at:
+
+```text
+checkpoints/fusion_mlp/fusion_mlp_fused.pt
+```
+
+The `.pt` file contains the trained state dictionary together with the feature
+definition, normalization statistics, hidden dimension, and dropout setting
+needed for inference.
+
+The Room0 inference pipeline in
+`Project/Milestone 4/run_room0_mlp_inference.sh` expects both project-trained
+checkpoints at the locations above. When running on the cluster, reproduce the
+same directory structure below the cluster-side repository root.
+
+As with the CropFormer weights, these model artifacts are local runtime
+dependencies and should not be committed to Git. Only the training and
+inference code, lightweight configurations, and documentation should be
+version controlled.
 
 ### 4. Make sure the Replica dataset is in place
 

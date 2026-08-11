@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 import os
 import urllib.request
 import torch
@@ -9,12 +10,13 @@ import sys
 
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/cluster/52/go93coc"))
-REPLICA_ROOT = Path(os.environ.get("REPLICA_ROOT", "/cluster/52/go93coc/MaskClustering/data/replica"))
-CHECKPOINT_DIR = Path(os.environ.get("CHECKPOINT_DIR", "/cluster/52/go93coc/checkpoints"))
+MILESTONE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = Path(os.environ.get("PROJECT_ROOT", MILESTONE_DIR.parents[1])).resolve()
+REPLICA_ROOT = Path(os.environ.get("REPLICA_ROOT", REPO_ROOT / "data" / "replica"))
+CHECKPOINT_DIR = Path(os.environ.get("CHECKPOINT_DIR", REPO_ROOT / "checkpoints"))
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
-sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(MILESTONE_DIR))
 from sam_replica_pipeline import SamReplicaMaskPipeline
 
 SAM_MODEL_TYPE = "vit_h"
@@ -39,24 +41,39 @@ mask_generator = SamAutomaticMaskGenerator(
     min_mask_region_area=0,
 )
 
-pipeline = SamReplicaMaskPipeline(
-    replica_root=REPLICA_ROOT,
-    mask_generator=mask_generator,
-    min_area=15000,
-    min_stability_score=0.5,
-    save_metadata=True,
-)
+def main():
+    parser = argparse.ArgumentParser(description="Generate SAM masks for Replica")
+    parser.add_argument("--scene", type=str, default=None,
+                        help="Run on one scene only, e.g. room0")
+    parser.add_argument("--frame-id", type=int, default=None,
+                        help="Run on one exact frame only, e.g. 80")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Replace existing raw masks for the selected frame")
+    args = parser.parse_args()
 
-scenes = sorted([
-    d for d in os.listdir(REPLICA_ROOT)
-    if os.path.isdir(os.path.join(REPLICA_ROOT, d))
-    and d != "ground_truth"
-    and os.path.isdir(os.path.join(REPLICA_ROOT, d, "color"))
-])
+    pipeline = SamReplicaMaskPipeline(
+        replica_root=REPLICA_ROOT,
+        mask_generator=mask_generator,
+        min_area=15000,
+        min_stability_score=0.5,
+        overwrite=args.overwrite,
+        save_metadata=True,
+    )
 
-print(f"Found {len(scenes)} scenes: {scenes}")
+    scenes = [args.scene] if args.scene else sorted([
+        d for d in os.listdir(REPLICA_ROOT)
+        if os.path.isdir(os.path.join(REPLICA_ROOT, d))
+        and d != "ground_truth"
+        and os.path.isdir(os.path.join(REPLICA_ROOT, d, "color"))
+    ])
+    frame_ids = [args.frame_id] if args.frame_id is not None else None
 
-for scene in scenes:
-    pipeline.process_scene(scene)
+    print(f"Found {len(scenes)} scenes: {scenes}")
+    for scene in scenes:
+        pipeline.process_scene(scene, frame_ids=frame_ids)
 
-print("Done! All masks generated.")
+    print("Done! SAM masks generated.")
+
+
+if __name__ == "__main__":
+    main()

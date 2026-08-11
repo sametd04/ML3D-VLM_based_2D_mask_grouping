@@ -18,8 +18,9 @@ Usage:
     python run_sam3_masks.py --conf 0.1
 
 Environment variables:
-    REPLICA_ROOT: path to replica data (default: /cluster/52/go93coc/MaskClustering/data/replica)
-    SAM3_CHECKPOINT: path to sam3.pt (default: /cluster/52/go93coc/checkpoints/sam3.pt)
+    PROJECT_ROOT: repository root (default: inferred from this file)
+    REPLICA_ROOT: path to Replica data (default: <repo>/data/replica)
+    SAM3_CHECKPOINT: path to sam3.pt (default: <repo>/checkpoints/sam3.pt)
 """
 
 import argparse
@@ -34,15 +35,17 @@ from PIL import Image
 # Disable cuDNN to avoid version mismatch with older drivers
 torch.backends.cudnn.enabled = False
 
+MILESTONE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = Path(os.environ.get("PROJECT_ROOT", MILESTONE_DIR.parents[1])).resolve()
 REPLICA_ROOT = Path(os.environ.get(
     "REPLICA_ROOT",
-    "/cluster/52/go93coc/MaskClustering/data/replica"
+    REPO_ROOT / "data" / "replica"
 ))
 
-SAM3_CHECKPOINT = os.environ.get(
+SAM3_CHECKPOINT = str(Path(os.environ.get(
     "SAM3_CHECKPOINT",
-    "/cluster/52/go93coc/checkpoints/sam3.pt"
-)
+    REPO_ROOT / "checkpoints" / "sam3.pt"
+)))
 
 REPLICA_LABELS = (
     "basket", "bed", "bench", "bin", "blanket", "blinds", "book", "bottle",
@@ -159,6 +162,8 @@ def main():
                         help="Run on a specific scene only")
     parser.add_argument("--stride", type=int, default=MASKCLUSTERING_STRIDE,
                         help="Frame stride (default: 10)")
+    parser.add_argument("--frame-id", type=int, default=None,
+                        help="Run on one exact frame only, e.g. 80")
     parser.add_argument("--conf", type=float, default=0.05,
                         help="Confidence threshold (default: 0.05)")
     parser.add_argument("--output-dir", type=str, default="mask_sam3",
@@ -192,7 +197,12 @@ def main():
 
     for scene_name in scenes:
         scene_dir = REPLICA_ROOT / scene_name
-        if args.test:
+        if args.frame_id is not None:
+            frame_path = scene_dir / "color" / f"{args.frame_id}.jpg"
+            if not frame_path.exists():
+                raise FileNotFoundError(f"RGB frame not found: {frame_path}")
+            frame_ids = [args.frame_id]
+        elif args.test:
             frame_ids = get_frame_ids(scene_dir, stride=args.stride)[:1]
         else:
             frame_ids = get_frame_ids(scene_dir, stride=args.stride)

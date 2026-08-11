@@ -1,124 +1,153 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=m4_final
 #SBATCH --partition=interactive
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=7:55:00
-#SBATCH --output=/cluster/52/go93coc/m4_final_%j.log
+#SBATCH --output=m4_final_%j.log
 
-# Final E2E Milestone 4 run:
-#   1. or_rule candidates (geometric overlap OR view consensus >= 0.6) for 8 scenes
-#   2. candidate CSVs -> Kate-format pair pools
-#   3. score all pairs with Kate's vision-classifier checkpoint (checkpoint-625)
-#   4. classifier JSON -> per-scene score CSVs
-#   5. train fusion MLP (geometry / qwen / fused) on 6 scenes, val office4
-#   6. score room0, cluster, evaluate AP for all variants
+# Portable Milestone-4 pipeline:
+#   1. build high-recall candidates for every selected scene;
+#   2. score candidates with the fine-tuned Qwen classifier;
+#   3. convert Qwen outputs to per-pair CSV files;
+#   4. train geometry, Qwen, and fused MLP ablations;
+#   5. score and cluster the held-out test scenes.
 
 set -euo pipefail
-set -x
 
-BASE=/cluster/52/go93coc
-REPO=$BASE/ML3D-VLM_based_2D_mask_grouping
-KATE=$BASE/kate_branch            # separate checkout of kate_lora_fine_tuning
-ADAPTER=$BASE/checkpoint-625
-M3=$REPO/Project/Milestone_3
-M4=$REPO/Project/Milestone_4
-CAND=$M3/data/candidates_orule
-POOLS=$M3/data/pools_orule
-SCORES=$M3/data/qwen_scores_final
-export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
+M3="$REPO/Project/Milestone_3"
+M4="$REPO/Project/Milestone_4"
 
-TRAIN_SCENES="room1 room2 office0 office1 office2 office3"
-VAL_SCENE="office4"
-TEST_SCENE="room0"
-ALL_SCENES="$TRAIN_SCENES $VAL_SCENE $TEST_SCENE"
+ADAPTER="${ADAPTER:-$REPO/checkpoints/qwen/checkpoint-625}"
+QWEN_PYTHON="${QWEN_PYTHON:-$REPO/Project/env/qwen_env/bin/python}"
+MC_ENV="${MC_ENV:-maskclustering}"
 
-# Repo and Kate's branch checkout are rsynced from the local machine
-# (cluster copy has no .git). Fail fast if either is missing.
-test -f $M3/candidates_to_pool.py
-test -f $KATE/Project/Milestone_4/fine_tuning.py
-test -f $ADAPTER/adapter_model.safetensors
+CAND="$M3/data/candidates_orule"
+SCORES="$M3/data/qwen_scores_final"
+MODELS="${MODELS:-$REPO/checkpoints/fusion_mlp}"
 
-echo "=== STEP 1: or_rule candidates for 8 scenes (maskclustering env) ==="
-source /rhome/go93coc/miniconda3/etc/profile.d/conda.sh
-conda activate maskclustering
-cd $REPO
+# Defaults follow the documented split. Override any list when submitting:
+#   sbatch --export=ALL,TRAIN_SCENES="...",VAL_SCENES="..." run_m4_final.sbatch
+TRAIN_SCENES="${TRAIN_SCENES:-room1 office3 room0 office0}"
+VAL_SCENES="${VAL_SCENES:-office1 office2}"
+TEST_SCENES="${TEST_SCENES:-room2 office4}"
+ALL_SCENES="$TRAIN_SCENES $VAL_SCENES $TEST_SCENES"
+
+export HF_HOME="${HF_HOME:-$REPO/Project/env/hf_cache}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+export PYTHONPATH="$M3:$M4${PYTHONPATH:+:$PYTHONPATH}"
+
+for required in \
+    "$QWEN_PYTHON" \
+    "$M3/build_qwen_candidates.py" \
+    "$M3/fine_tuning.py" \
+    "$M3/config_stage1.yaml" \
+    "$M4/fusion_mlp.py" \
+    "$ADAPTER/adapter_model.safetensors" \
+    "$ADAPTER/adapter_config.json"; do
+    if [[ ! -s "$required" ]]; then
+        echo "Missing required input: $required" >&2
+        exit 1
+    fi
+done
+
+mkdir -p "$CAND" "$SCORES" "$MODELS"
+
+if ! command -v conda >/dev/null 2>&1; then
+    echo "conda is required for the MaskClustering environment." >&2
+    exit 1
+fi
+CONDA_SH="${CONDA_SH:-$(conda info --base)/etc/profile.d/conda.sh}"
+source "$CONDA_SH"
+conda activate "$MC_ENV"
+MC_PYTHON="$(command -v python)"
+
+echo "=== STEP 1/5: build OR-rule candidates ==="
+cd "$REPO"
 for scene in $ALL_SCENES; do
-  python Project/Milestone_3/build_qwen_candidates.py \
-    --scene $scene --config replica \
-    --depth-overlap-threshold 0.05 --filter-mode or_rule --vc-threshold 0.6 \
-    --output $CAND/${scene}_qwen_candidates.csv
+    output="$CAND/${scene}_qwen_candidates.csv"
+    if [[ -s "$output" ]]; then
+        echo "Reusing $output"
+        continue
+    fi
+    "$MC_PYTHON" "$M3/build_qwen_candidates.py" \
+        --scene "$scene" --config replica \
+        --depth-overlap-threshold 0.05 \
+        --filter-mode or_rule --vc-threshold 0.6 \
+        --output "$output"
 done
-conda deactivate
 
-echo "=== STEP 2: candidates -> pair pools ==="
-source $REPO/qwen_env/bin/activate
+echo "=== STEP 2/5: fine-tuned Qwen scoring ==="
 for scene in $ALL_SCENES; do
-  python $M3/candidates_to_pool.py \
-    --candidates $CAND/${scene}_qwen_candidates.csv \
-    --output $POOLS/${scene}.pkl
+    output="$SCORES/${scene}_classifier.json"
+    if [[ -s "$output" ]]; then
+        echo "Reusing $output"
+        continue
+    fi
+    cd "$M3"
+    "$QWEN_PYTHON" "$M3/fine_tuning.py" score \
+        --pool-path "$CAND/${scene}_qwen_candidates.csv" \
+        --masks-root "$REPO/data" \
+        --rgb-root "$REPO/data/replica" \
+        --condition pair_only --render-mode outline \
+        --adapter-path "$ADAPTER" \
+        --config "$M3/config_stage1.yaml" \
+        --batch-size 16 \
+        --output "$output"
 done
 
-echo "=== STEP 3: score all candidate pairs with Kate's classifier ==="
-cd $KATE/Project/Milestone_4
-mkdir -p $SCORES
+echo "=== STEP 3/5: convert classifier outputs ==="
+cd "$REPO"
 for scene in $ALL_SCENES; do
-  python fine_tuning.py score \
-    --pool-path $POOLS/${scene}.pkl \
-    --masks-root $REPO/data \
-    --rgb-root $REPO/data/replica \
-    --condition pair_only --render-mode outline \
-    --adapter-path $ADAPTER \
-    --config config_stage1.yaml \
-    --K 10000000 --neg-ratio 1000000 \
-    --batch-size 16 \
-    --output $SCORES/${scene}_classifier.json
+    output="$SCORES/${scene}_scored.csv"
+    if [[ -s "$output" ]]; then
+        echo "Reusing $output"
+        continue
+    fi
+    "$QWEN_PYTHON" "$M3/convert_classifier_scores.py" \
+        --input "$SCORES/${scene}_classifier.json" \
+        --output "$output" \
+        --candidates "$CAND/${scene}_qwen_candidates.csv"
 done
 
-echo "=== STEP 4: classifier JSON -> score CSVs ==="
-cd $REPO
-for scene in $ALL_SCENES; do
-  python Project/Milestone_3/convert_classifier_scores.py \
-    --input $SCORES/${scene}_classifier.json \
-    --output $SCORES/${scene}_scored.csv \
-    --candidates $CAND/${scene}_qwen_candidates.csv
+echo "=== STEP 4/5: train Fusion-MLP ablations ==="
+train_csvs=()
+val_csvs=()
+for scene in $TRAIN_SCENES; do train_csvs+=("$SCORES/${scene}_scored.csv"); done
+for scene in $VAL_SCENES; do val_csvs+=("$SCORES/${scene}_scored.csv"); done
+
+for feature_set in geometry qwen fused; do
+    model="$MODELS/fusion_mlp_${feature_set}.pt"
+    "$QWEN_PYTHON" "$M4/fusion_mlp.py" train \
+        --train-scores "${train_csvs[@]}" \
+        --val-scores "${val_csvs[@]}" \
+        --feature-set "$feature_set" \
+        --model-out "$model"
 done
 
-echo "=== STEP 5: train fusion MLPs (3 feature sets) ==="
-cd $M4
-TRAIN_CSVS=""
-for scene in $TRAIN_SCENES; do TRAIN_CSVS="$TRAIN_CSVS $SCORES/${scene}_scored.csv"; done
-for fs in geometry qwen fused; do
-  python fusion_mlp.py train \
-    --train-scores $TRAIN_CSVS \
-    --val-scores $SCORES/${VAL_SCENE}_scored.csv \
-    --feature-set $fs \
-    --model-out output_final/fusion_mlp_${fs}.pt
+echo "=== STEP 5/5: score and cluster test scenes ==="
+for scene in $TEST_SCENES; do
+    cp "$SCORES/${scene}_scored.csv" "$SCORES/${scene}_qwen.csv"
+    for feature_set in geometry qwen fused; do
+        "$QWEN_PYTHON" "$M4/fusion_mlp.py" score \
+            --scores "$SCORES/${scene}_scored.csv" \
+            --model "$MODELS/fusion_mlp_${feature_set}.pt" \
+            --output "$SCORES/${scene}_mlp_${feature_set}.csv"
+    done
+
+    cd "$REPO"
+    for variant in qwen mlp_geometry mlp_qwen mlp_fused; do
+        "$MC_PYTHON" "$M3/run_qwen_clustering.py" \
+            --scene "$scene" \
+            --scores "$SCORES/${scene}_${variant}.csv" \
+            --output-name "final_${variant}" \
+            --qwen-score-threshold 0.5
+    done
 done
 
-echo "=== STEP 6: score room0, cluster, evaluate ==="
-for fs in geometry qwen fused; do
-  python fusion_mlp.py score \
-    --scores $SCORES/${TEST_SCENE}_scored.csv \
-    --model output_final/fusion_mlp_${fs}.pt \
-    --output $SCORES/${TEST_SCENE}_mlp_${fs}.csv
-done
-deactivate
-
-conda activate maskclustering
-cd $REPO
-# kate_raw: Kate's classifier probabilities used directly as edge scores
-cp $SCORES/${TEST_SCENE}_scored.csv $SCORES/${TEST_SCENE}_kate_raw.csv
-for variant in kate_raw mlp_geometry mlp_qwen mlp_fused; do
-  python Project/Milestone_3/run_qwen_clustering.py --scene $TEST_SCENE \
-    --scores $SCORES/${TEST_SCENE}_${variant}.csv \
-    --output-name final_${variant} --qwen-score-threshold 0.5
-  echo "--- AP: $variant ---"
-  cd $REPO/MaskClustering
-  python -m evaluation.evaluate --pred_path data/prediction/final_${variant}_class_agnostic \
-    --gt_path data/replica/ground_truth --dataset replica --no_class
-  cd $REPO
-done
-
-echo "=== PIPELINE DONE ==="
+echo "Milestone-4 pipeline complete."

@@ -40,8 +40,8 @@ pip install --upgrade pip --quiet
 echo "==> [3/6] Installing torch (cu124) then transformers stack"
 pip install torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu124
-pip install transformers accelerate peft "qwen-vl-utils==0.0.14"
-pip install pyyaml opencv-python-headless pillow numpy pandas tqdm scikit-learn
+pip install transformers accelerate "qwen-vl-utils==0.0.14" peft
+pip install pyyaml opencv-python pillow numpy tqdm scikit-learn
 
 echo "==> [4/6] Installing Jupyter kernel support"
 pip install ipykernel
@@ -53,9 +53,11 @@ echo "==> [6/6] Verifying installation"
 python - <<'PYEOF'
 import torch
 import transformers
+import peft
 from transformers import Qwen3VLForConditionalGeneration  # noqa: F401
 
 print(f"transformers version: {transformers.__version__}")
+print(f"peft version:         {peft.__version__}")
 print(f"torch version:       {torch.__version__}")
 print(f"CUDA available:      {torch.cuda.is_available()}")
 if torch.cuda.is_available():

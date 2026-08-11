@@ -11,18 +11,26 @@ most confident masks get pixel priority over less confident ones.
 """
 
 from pathlib import Path
+import argparse
 import os
 import json
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
+MILESTONE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = Path(os.environ.get("PROJECT_ROOT", MILESTONE_DIR.parents[1])).resolve()
 REPLICA_ROOT = Path(os.environ.get(
     "REPLICA_ROOT",
-    "/cluster/52/go93coc/MaskClustering/data/replica"
+    REPO_ROOT / "data" / "replica"
 ))
 
-scenes = sorted([
+parser = argparse.ArgumentParser(description="Convert raw SAM masks to instance maps")
+parser.add_argument("--scene", type=str, default=None)
+parser.add_argument("--frame-id", type=int, default=None)
+args = parser.parse_args()
+
+scenes = [args.scene] if args.scene else sorted([
     d for d in os.listdir(REPLICA_ROOT)
     if os.path.isdir(REPLICA_ROOT / d)
     and d != "ground_truth"
@@ -40,6 +48,12 @@ for scene in scenes:
         [d for d in masks_root.iterdir() if d.is_dir()],
         key=lambda p: int(p.name)
     )
+    if args.frame_id is not None:
+        frame_dirs = [d for d in frame_dirs if d.name == str(args.frame_id)]
+        if not frame_dirs:
+            raise FileNotFoundError(
+                f"Raw SAM masks not found: {masks_root / str(args.frame_id)}"
+            )
 
     for frame_dir in tqdm(frame_dirs, desc=scene):
         metadata_path = frame_dir / "metadata.json"

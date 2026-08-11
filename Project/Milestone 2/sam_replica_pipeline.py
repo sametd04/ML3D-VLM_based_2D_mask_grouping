@@ -25,7 +25,7 @@ class SamReplicaMaskPipeline:
         self.overwrite = overwrite
         self.save_metadata = save_metadata
     
-    def process_scene(self, scene_name):
+    def process_scene(self, scene_name, frame_ids=None):
         """
         Takes the scene name, iterates over all images within the scene, creates a folder for all masks and
         then creates a separate folder for the masks of each image
@@ -37,6 +37,15 @@ class SamReplicaMaskPipeline:
         masks_dir.mkdir(parents=True, exist_ok=True)
 
         image_paths = sorted(color_dir.glob("*.jpg"), key=lambda p: int(p.stem))
+        if frame_ids is not None:
+            requested = {str(frame_id) for frame_id in frame_ids}
+            image_paths = [p for p in image_paths if p.stem in requested]
+            found = {p.stem for p in image_paths}
+            missing = sorted(requested - found, key=int)
+            if missing:
+                raise FileNotFoundError(
+                    f"Frames not found in {color_dir}: {', '.join(missing)}"
+                )
 
         for image_path in tqdm(image_paths, desc=scene_name):
             frame_id = image_path.stem
