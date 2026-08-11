@@ -109,7 +109,7 @@ def passes_overlap_filter(
     threshold: float,
     mode: str,
     view_consensus_score: float = 0.0,
-    vc_threshold: float = 0.6,
+    vc_threshold: float = 0.30,
 ) -> bool:
     if mode == "iou":
         return float(overlap["depth_iou"]) >= threshold
@@ -418,7 +418,7 @@ def main() -> None:
     parser.add_argument(
         "--vc-threshold",
         type=float,
-        default=0.6,
+        default=0.30,
         help="View consensus threshold for the or_rule filter mode.",
     )
     mode_group = parser.add_mutually_exclusive_group()

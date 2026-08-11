@@ -11,7 +11,7 @@ The examples assume this layout:
 ```text
 <repo>/
 |-- data/replica/                         # Replica RGB-D data and generated masks
-|-- checkpoints/qwen/checkpoint-625/     # Fine-tuned Qwen adapter and score head
+|-- checkpoints/qwen/checkpoint-822/     # Fine-tuned Qwen adapter and score head
 |-- MaskClustering/
 `-- Project/Milestone_3/
 ```
@@ -51,7 +51,7 @@ python Project/Milestone_3/build_qwen_candidates.py \
     --scene room0 \
     --filter-mode or_rule \
     --depth-overlap-threshold 0.05 \
-    --vc-threshold 0.60
+    --vc-threshold 0.30
 ```
 
 Default outputs:
@@ -68,7 +68,7 @@ Useful arguments:
 | `--scene` | Replica scene name |
 | `--filter-mode` | `iou`, `any_asymmetric`, or `or_rule` |
 | `--depth-overlap-threshold` | Minimum geometric-overlap threshold; default `0.05` |
-| `--vc-threshold` | View-consensus threshold for `or_rule`; default `0.60` |
+| `--vc-threshold` | View-consensus threshold for `or_rule`; default `0.30` |
 | `--train` | Enable training selection and optional negative balancing |
 | `--negative-ratio` | Optional maximum number of negatives per positive in training mode |
 | `--eval` | Keep all filter-passing candidates; this is the default |
@@ -151,7 +151,7 @@ python Project/Milestone_3/fine_tuning.py score \
     --rgb-root data/replica \
     --condition pair_only \
     --render-mode outline \
-    --adapter-path checkpoints/qwen/checkpoint-625 \
+    --adapter-path checkpoints/qwen/checkpoint-822 \
     --output Project/Milestone_3/results/score_office1.json \
     --config Project/Milestone_3/config_stage1.yaml
 ```

@@ -12,7 +12,7 @@ The examples assume this layout:
 <repo>/
 |-- data/replica/
 |-- checkpoints/
-|   |-- qwen/checkpoint-625/
+|   |-- qwen/checkpoint-822/
 |   `-- fusion_mlp/fusion_mlp_fused.pt
 `-- Project/
     |-- Milestone_3/
@@ -132,29 +132,20 @@ python Project/Milestone_3/run_qwen_clustering.py \
 
 Despite the historical argument name `--qwen-score-threshold`, the threshold is applied to the Fusion-MLP edge probability in this call. Mask pairs above the threshold become graph edges; connected components form the predicted 3D instances.
 
-## Room0 end-to-end helper
-
-`run_room0_mlp_inference.sh` runs candidate generation, fine-tuned Qwen scoring, Fusion-MLP scoring, and clustering for Room0. It uses the consolidated Qwen code in `Project/Milestone_3` and does not require a separate branch checkout.
-
-Required model artifacts:
+## Required model artifacts
 
 ```text
-checkpoints/qwen/checkpoint-625/adapter_model.safetensors
-checkpoints/qwen/checkpoint-625/adapter_config.json
+checkpoints/qwen/checkpoint-822/adapter_model.safetensors
+checkpoints/qwen/checkpoint-822/adapter_config.json
 checkpoints/fusion_mlp/fusion_mlp_fused.pt
 ```
 
-## Cluster jobs
-
-The `.sbatch` files document the original university-cluster workflow. Cluster-specific account, partition, environment, and filesystem settings must be configured locally before submission. They should not contain personal paths in a public version of the repository.
+These are runtime dependencies and are not tracked in the repository. Cluster job scripts are not tracked
+either, because they hardcode machine-specific account, partition and filesystem settings.
 
 ## Main files
 
 | File | Purpose |
 |---|---|
 | `fusion_mlp.py` | Train and score geometry-only, Qwen-only, or fused MLP models |
-| `fusion_mlp.ipynb` | Interactive example for MLP training and scoring |
-| `run_room0_mlp_inference.sh` | Room0 end-to-end helper |
-| `run_m4_final.sbatch` | Full cluster workflow; requires cluster configuration |
-
-Poster-specific export utilities belong in `Project/Poster` rather than in the production Milestone-4 pipeline.
+| `render_clusters.py` | Render predicted 3D instances from a mesh and prediction files, for side-by-side comparison |

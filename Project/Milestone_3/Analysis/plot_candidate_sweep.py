@@ -9,7 +9,7 @@ Produces two figures:
 
 1. sweep_lines.png -- one line per room, sweeping one threshold at a time while
    holding the other fixed at build_qwen_candidates.py's own CLI default
-   (depth_overlap_threshold=0.05, vc_threshold=0.6), for gt_positive_kept_pct,
+   (depth_overlap_threshold=0.05, vc_threshold=0.30), for gt_positive_kept_pct,
    gt_negative_kept_pct, and candidate_pairs_kept.
 2. sweep_heatmaps.png -- per room, both thresholds' joint influence on each of
    those same three metrics (a 2D parameter space needs a 2D form, not lines).
@@ -27,7 +27,7 @@ HEATMAP_OUT = Path("data/candidates/sweep/sweep_heatmaps.png")
 
 # Held fixed when sweeping the other threshold -- matches build_qwen_candidates.py's
 # own --depth-overlap-threshold/--vc-threshold CLI defaults, not arbitrary picks.
-FIXED_VC_THRESHOLD = 0.6
+FIXED_VC_THRESHOLD = 0.30
 FIXED_DEPTH_THRESHOLD = 0.05
 
 # Okabe-Ito colorblind-safe palette -- same set as SCENE_PALETTE in
