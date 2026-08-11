@@ -1,6 +1,0 @@
-{
-  "Baseline (view consensus)": {"AP": 0.149, "AP50": 0.305, "AP25": 0.489},
-  "MLP Qwen-only": {"AP": 0.020, "AP50": 0.036, "AP25": 0.132},
-  "MLP geometry-only": {"AP": 0.142, "AP50": 0.294, "AP25": 0.495},
-  "Fusion MLP (geo + Qwen)": {"AP": 0.143, "AP50": 0.297, "AP25": 0.483}
-}

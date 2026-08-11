@@ -17,8 +17,7 @@ clustering, so differences are attributable to the edge score rather than the cl
 | 1 - Baseline | `Project/Milestone 1/` | MaskClustering reproduction on Replica (notebooks) |
 | 2 - Mask backbone | `Project/Milestone 2/` | CropFormer vs. SAM (ViT-H) vs. SAM3 comparison; CropFormer wins and is used from here on |
 | 3 - Semantic edge scorer | `Project/Milestone_3/` | Candidate-pair filtering, Qwen3-VL scoring (zero-shot and LoRA fine-tuned), fine-tuning code |
-| 4 - Fusion | `Project/Milestone_4/` | MLP fusing one semantic and five geometric features into a single edge score |
-| Deliverable | `Project/poster/` | Poster (A0, LaTeX) and the qualitative render scripts |
+| 4 - Fusion | `Project/Milestone_4/` | MLP fusing one semantic and five geometric features into a single edge score, plus the qualitative render script |
 
 `MaskClustering/` is the upstream baseline (graph construction, clustering, evaluation).
 
@@ -126,8 +125,7 @@ The `.pt` file contains the trained state dictionary together with the feature
 definition, normalization statistics, hidden dimension, and dropout setting
 needed for inference.
 
-The Room0 inference pipeline in
-`Project/Milestone_4/run_room0_mlp_inference.sh` expects both project-trained
+The Milestone 3 and 4 scoring and inference code expects both project-trained
 checkpoints at the locations above. When running on the cluster, reproduce the
 same directory structure below the cluster-side repository root.
 
@@ -216,9 +214,20 @@ pre-computed Qwen score, fusion adds no extra VLM inference cost at clustering t
 
 See [Project/Milestone_4/README.md](Project/Milestone_4/README.md) for training and inference details.
 
+`render_clusters.py` renders predicted 3D instances from a scene mesh and one or more prediction `.npz` files,
+so clustering variants can be compared side by side from a fixed viewpoint:
+
+```bash
+python Project/Milestone_4/render_clusters.py \
+    --mesh room2_mesh.ply \
+    --pred baseline=path/to/baseline/room2.npz fused=path/to/fused/room2.npz \
+    --out-dir renders/
+```
+
 ## Notes
 
 - Anything using CUDA must run on a GPU node; the login node is CPU-only.
 - Model weights (CropFormer, Qwen adapters, fusion MLP) are runtime dependencies and are deliberately not
   committed. See the checkpoint layout above.
-- Cluster job scripts are intentionally not version controlled, since they contain machine-specific paths.
+- This repository contains the code only. The report and poster are submitted separately as PDFs, and cluster
+  job scripts are not version controlled because they contain machine-specific paths.
