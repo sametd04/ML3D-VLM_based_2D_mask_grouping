@@ -1,0 +1,38 @@
+# Pip-installable dependencies for the MaskClustering + CropFormer end-to-end pipeline.
+#
+# NOT covered here (installed by setup_env.sh instead, because they need CUDA-matched
+# builds or compiled extensions): torch, torchvision, pytorch3d, detectron2, CropFormer.
+#
+# Usage: this file is installed automatically by `bash setup_env.sh`. You normally don't
+# need to run `pip install -r requirements.txt` by hand.
+
+# --- MaskClustering core ---
+# numpy is capped below 2 because pytorch3d and detectron2 are built against the
+# NumPy 1.x ABI here, and opencv-python 4.10+ requires numpy>=2, so it is capped too.
+numpy<2
+tqdm
+open3d
+networkx
+opencv-python<4.10
+pyviz3d
+pypng
+pillow
+imageio
+pandas
+plyfile
+open_clip_torch
+
+# --- CropFormer / detectron2 extras (from third_party/Entity/.../CropFormer/requirements.txt) ---
+cython
+scipy
+shapely
+timm
+h5py
+submitit
+scikit-image
+openmim
+
+# --- checkpoint download + notebook runtime ---
+huggingface_hub
+jupyter
+ipykernel

@@ -1,0 +1,46 @@
+model_id: "Qwen/Qwen3-VL-2B-Instruct"
+attn_implementation: "sdpa"  # shared by inference and fine-tuning
+
+# Stage 1: learn the general pair-classification structure from the broad
+# training pool (no hard-case curation yet). One epoch since the pool is
+# large; LR decays on a cosine schedule down to a min_lr floor rather than to
+# 0, so stage 2+ (a separate config, resuming from this stage's adapter via
+# `train --init-adapter-path <this output_dir>`) has a well-conditioned
+# starting point for its own, much smaller LR on harder cases.
+sft:
+    output_dir: "output/qwen3-vl-lora-stage1"
+    num_train_epochs: 1
+    per_device_train_batch_size: 16
+    gradient_accumulation_steps: 2
+    learning_rate: 5.0e-5
+    lr_scheduler_type: "cosine_with_min_lr"
+    lr_scheduler_kwargs:
+        min_lr: 1.0e-6
+    weight_decay: 0.01
+    warmup_steps: 250
+    logging_steps: 10
+    save_strategy: "steps"
+    save_steps: 100
+    eval_strategy: "no"
+    eval_steps: 100
+    bf16: true
+    remove_unused_columns: false
+    report_to: ["tensorboard"]
+
+lora:
+    r: 32
+    alpha: 64
+    dropout: 0.05
+    # Vision-encoder-only LoRA — the classifier head sits directly on pooled image
+    # embeddings from the vision tower; the decoder/LM is not used at all.
+    vision_lora_layers: "last_n"   # "all" | "last_n"
+    last_n_layers: 8               # only used when vision_lora_layers == "last_n"; vision tower has 27 blocks total
+
+head:
+    mlp_hidden_dim: 512
+    dropout: 0.1
+
+loss:
+    # Softens 0/1 BCE targets toward 0.5 so a confidently-wrong prediction can't blow up
+    # the loss unboundedly -- see QwenVisionLoraClassifier.forward() in fine_tuning.py.
+    label_smoothing: 0.1

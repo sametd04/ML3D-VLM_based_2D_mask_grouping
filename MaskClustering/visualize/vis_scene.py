@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import pyviz3d.visualizer as viz
 from utils.config import get_dataset, get_args
 import open3d as o3d
@@ -55,7 +56,8 @@ def main(args):
     # If you want to visualize the label id of each object, you can uncomment the following line.
     # v.add_labels('Labels', labels, centers, label_colors)
 
-    v.save(f'data/vis/{args.seq_name}')
+    vis_dir = os.environ.get('VIS_OUTPUT_DIR', f'data/vis/{args.seq_name}')
+    v.save(vis_dir)
 
 
 if __name__ == '__main__':
