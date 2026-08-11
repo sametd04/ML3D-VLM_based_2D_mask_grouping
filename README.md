@@ -1,5 +1,26 @@
 # ML3D-VLM_based_2D_mask_grouping
+
 This repository is for the course Machine Learning for 3D Geometry by Prof. Dr. Dai.
+
+**Research question:** can a Vision-Language Model improve the grouping of 2D masks into 3D object instances?
+
+The geometry-only [MaskClustering](https://github.com/PKU-EPIC/MaskClustering) baseline groups per-frame 2D
+instance masks into 3D objects using multi-view *view consensus*. It is cheap and strong, but semantically
+blind. We test whether semantic evidence from Qwen3-VL improves that grouping, either as a direct pairwise
+edge scorer or fused with geometry through a small MLP. All variants feed the same downstream graph
+clustering, so differences are attributable to the edge score rather than the clustering algorithm.
+
+## Project structure
+
+| Milestone | Directory | Contents |
+|---|---|---|
+| 1 - Baseline | `Project/Milestone 1/` | MaskClustering reproduction on Replica (notebooks) |
+| 2 - Mask backbone | `Project/Milestone 2/` | CropFormer vs. SAM (ViT-H) vs. SAM3 comparison; CropFormer wins and is used from here on |
+| 3 - Semantic edge scorer | `Project/Milestone_3/` | Candidate-pair filtering, Qwen3-VL scoring (zero-shot and LoRA fine-tuned), fine-tuning code |
+| 4 - Fusion | `Project/Milestone_4/` | MLP fusing one semantic and five geometric features into a single edge score |
+| Deliverable | `Project/poster/` | Poster (A0, LaTeX) and the qualitative render scripts |
+
+`MaskClustering/` is the upstream baseline (graph construction, clustering, evaluation).
 
 ## Running the Milestone 1 pipeline end-to-end
 
@@ -51,7 +72,7 @@ ML3D-VLM_based_2D_mask_grouping/
 |-- checkpoints/
 |   |-- Mask2Former_hornet_3x_576d0b.pth
 |   |-- qwen/
-|   |   `-- checkpoint-625/
+|   |   `-- checkpoint-822/
 |   |       |-- adapter_config.json
 |   |       `-- adapter_model.safetensors
 |   `-- fusion_mlp/
@@ -77,14 +98,14 @@ blocks, the adapted vision patch merger, and the trained binary classification
 head. Store the complete training checkpoint at:
 
 ```text
-checkpoints/qwen/checkpoint-625/
+checkpoints/qwen/checkpoint-822/
 ```
 
 For inference, the essential files are:
 
 ```text
-checkpoints/qwen/checkpoint-625/adapter_config.json
-checkpoints/qwen/checkpoint-625/adapter_model.safetensors
+checkpoints/qwen/checkpoint-822/adapter_config.json
+checkpoints/qwen/checkpoint-822/adapter_model.safetensors
 ```
 
 Keep the remaining files (`optimizer.pt`, `scheduler.pt`, `trainer_state.json`,
@@ -106,7 +127,7 @@ definition, normalization statistics, hidden dimension, and dropout setting
 needed for inference.
 
 The Room0 inference pipeline in
-`Project/Milestone 4/run_room0_mlp_inference.sh` expects both project-trained
+`Project/Milestone_4/run_room0_mlp_inference.sh` expects both project-trained
 checkpoints at the locations above. When running on the cluster, reproduce the
 same directory structure below the cluster-side repository root.
 
@@ -149,3 +170,55 @@ Open `Project/Milestone 1/maskclustering_pipeline.ipynb` and run all cells top t
 | 6 | Class-aware evaluation (baseline mAP) |
 
 Every step checks its own prerequisites first and raises a clear error telling you exactly what's missing and which earlier step to run if something's off — if a cell fails, read the error message before asking around.
+
+## Milestone 2: comparing 2D mask backbones
+
+The clustering quality is bounded by the input 2D masks, so the backbone is fixed first. Generate masks with
+each candidate segmenter and run the same clustering on top:
+
+```bash
+python "Project/Milestone 2/run_sam_masks.py"    # SAM (ViT-H)
+python "Project/Milestone 2/run_sam3_masks.py"   # SAM3 (text-prompted)
+python "Project/Milestone 2/convert_sam_to_maskclustering.py"
+```
+
+SAM3 needs its own environment because it requires a newer PyTorch than the rest of the project:
+
+```bash
+bash "Project/Milestone 2/setup_sam3_env.sh"
+```
+
+CropFormer produced the most instance-coherent masks and the best downstream AP, so it is the backbone for
+Milestones 3 and 4.
+
+## Milestone 3: Qwen3-VL as a semantic edge scorer
+
+Scoring every mask pair with a VLM is quadratic in the number of masks, so a permissive geometric filter
+selects candidate pairs first and the VLM is only queried on those:
+
+```bash
+python Project/Milestone_3/build_qwen_candidates.py   # candidate pairs + geometric features
+python Project/Milestone_3/candidates_to_pool.py      # candidates -> pair pool
+python Project/Milestone_3/score_qwen_candidates.py   # Qwen3-VL P(same instance)
+```
+
+Fine-tuning and its evaluation live in `fine_tuning.py` and `evaluate.py`; see
+[Project/Milestone_3/README.md](Project/Milestone_3/README.md) for the environment setup (the geometry and
+Qwen phases need separate virtual environments) and [Fine_Tuning.md](Project/Milestone_3/Fine_Tuning.md) for
+the pair building, sampling and training design.
+
+## Milestone 4: fusion MLP
+
+`Project/Milestone_4/fusion_mlp.py` trains a small MLP that fuses the Qwen same-instance probability with
+five geometric features (view consensus, observation count, depth IoU, and both directional overlaps) into a
+single edge score, which then replaces view consensus in the same clustering step. Because it consumes a
+pre-computed Qwen score, fusion adds no extra VLM inference cost at clustering time.
+
+See [Project/Milestone_4/README.md](Project/Milestone_4/README.md) for training and inference details.
+
+## Notes
+
+- Anything using CUDA must run on a GPU node; the login node is CPU-only.
+- Model weights (CropFormer, Qwen adapters, fusion MLP) are runtime dependencies and are deliberately not
+  committed. See the checkpoint layout above.
+- Cluster job scripts are intentionally not version controlled, since they contain machine-specific paths.
