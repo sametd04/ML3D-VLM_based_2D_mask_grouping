@@ -1,39 +1,126 @@
-# ML3D-VLM_based_2D_mask_grouping
+# Can a Vision-Language Model Improve the Grouping of 2D Masks into 3D Object Instances?
 
-This repository is for the course Machine Learning for 3D Geometry by Prof. Dr. Dai.
+Samet Degirmenci, Florian Wissel, Kateřina Skotnicová, Omar Bin Faheem
+Machine Learning for 3D Geometry (SS 2026), Technical University of Munich
 
-**Research question:** can a Vision-Language Model improve the grouping of 2D masks into 3D object instances?
+**[Paper](docs/paper.pdf)** · **[Poster](docs/poster.pdf)**
 
-The geometry-only [MaskClustering](https://github.com/PKU-EPIC/MaskClustering) baseline groups per-frame 2D
-instance masks into 3D objects using multi-view *view consensus*. It is cheap and strong, but semantically
-blind. We test whether semantic evidence from Qwen3-VL improves that grouping, either as a direct pairwise
-edge scorer or fused with geometry through a small MLP. All variants feed the same downstream graph
-clustering, so differences are attributable to the edge score rather than the clustering algorithm.
+Bottom-up 3D instance segmentation groups per-frame 2D masks into 3D objects.
+[MaskClustering](https://github.com/PKU-EPIC/MaskClustering) does this purely geometrically, from multi-view
+*view consensus*, which is cheap and surprisingly strong but semantically blind: it under-merges objects seen in
+too few frames and over-merges spatially co-located ones, because it has no notion of what an object is.
 
-## Project structure
+**Research question: can semantic evidence from a vision-language model improve geometric mask grouping,
+without an expensive pairwise VLM call for every candidate pair?**
+
+We compare five edge scorers under an identical CropFormer mask backbone and identical downstream clustering, so
+differences are attributable to the edge score alone: the geometric baseline, zero-shot Qwen3-VL, LoRA
+fine-tuned Qwen3-VL, a simple average of the two, and a learned fusion MLP over one semantic and five geometric
+features.
+
+## Results
+
+Class-agnostic AP on held-out test scenes. Qwen was fine-tuned on `office0`, `office1`, `office2`, `room0`; the
+fusion MLP used a leak-free train/val/test split, so neither model saw `room2` or `office3`.
+
+| Edge scorer | room2 AP | AP@50 | AP@25 | office3 AP | AP@50 | AP@25 |
+|---|---|---|---|---|---|---|
+| View consensus (baseline, iterative) | 0.082 | 0.189 | 0.423 | **0.128** | **0.265** | **0.432** |
+| Qwen zero-shot | 0.019 | 0.032 | 0.105 | 0.013 | 0.046 | 0.155 |
+| Qwen fine-tuned (LoRA) | 0.010 | 0.010 | 0.091 | 0.016 | 0.056 | 0.113 |
+| Average (Qwen + consensus) | 0.075 | 0.191 | 0.430 | 0.128 | 0.265 | 0.432 |
+| **Fusion MLP (geo + Qwen)** | **0.083** | **0.205** | **0.441** | 0.127 | 0.262 | 0.427 |
+
+**This is a negative result, reported as one.** The fusion MLP is the only semantic-aware variant competitive
+with pure geometry, and it gets there in a *single* clustering pass against the baseline's iterative one. But
+the margin is within noise. On Replica, geometry carries almost all of the usable signal.
+
+The 2D mask backbone matters far more than the semantic signal (pooled over all 8 scenes):
+
+| Backbone | AP | AP@50 | AP@25 |
+|---|---|---|---|
+| **CropFormer** | **0.123** | **0.260** | **0.472** |
+| SAM3 (conf. 0.25) | 0.123 | 0.224 | 0.370 |
+| SAM (ViT-H) | 0.061 | 0.107 | 0.222 |
+
+![2D mask backbone comparison](docs/figures/backbone_comparison.png)
+
+*CropFormer (left) produces the most instance-coherent masks; SAM (middle) fragments objects into parts; SAM3
+(right) is limited by its fixed text vocabulary.*
+
+### Why LoRA fine-tuning made things worse
+
+Fine-tuning *hurt* held-out performance relative to zero-shot on room2 (AP 0.010 vs 0.019). At the default
+threshold the fine-tuned model reaches recall ≈ 0.97 at a false-positive rate ≈ 0.89: it predicts "same
+instance" for nearly every pair. Because clustering takes connected components, a few bad positive edges
+transitively fuse many unrelated masks into one mega-cluster, so mild per-prediction miscalibration is
+catastrophic downstream.
+
+We attribute this to the small fine-tuning set (6,572 pairs from 4 scenes, 2 epochs) rather than a limitation of
+VLM-based scoring: the positive and negative score distributions after fine-tuning are barely separated (mean
+0.673 vs 0.624), and raising the threshold to 0.68 partially recovers performance.
+
+## Method
+
+1. **Mask backbone.** Clustering quality is bounded by input mask quality, so the backbone is fixed first.
+   CropFormer wins the downstream AP comparison and is used everywhere after that.
+2. **Candidate-pair filtering.** Scoring every pair with a VLM is O(N²) per scene and infeasible. A deliberately
+   lenient OR-rule keeps a pair if depth IoU ≥ τ, or either directional overlap ≥ τ, or view consensus ≥ τ_c
+   (τ = 0.05, τ_c = 0.30), spending the VLM budget only on plausible candidates.
+3. **Semantic scoring.** Each retained pair is rendered as two colored mask outlines on their RGB frames and
+   Qwen3-VL is queried for P(same instance). The LoRA variant adapts the last 8 of 24 vision-encoder blocks,
+   pools patch tokens with learned attention, and concatenates both image tokens into a small MLP head.
+4. **Fusion MLP.** One semantic feature (p_Qwen) plus five geometric ones (view consensus, log observation
+   count, depth IoU, both directional overlaps) map to a single fused edge probability, trained on Replica
+   ground truth. Because it consumes a precomputed Qwen score, fusion adds no VLM cost at clustering time.
+
+### Qualitative comparison
+
+| Baseline | Fusion MLP |
+|---|---|
+| ![baseline](docs/figures/qualitative_baseline.png) | ![fusion](docs/figures/qualitative_fusion.png) |
+
+Both correctly group the room2 dining table into one instance. Visible differences concentrate on harder,
+low-observation objects, consistent with the small quantitative gap.
+
+## Limitations
+
+- **Single-pass clustering cannot self-correct.** One wrong "same instance" edge merges unrelated masks with no
+  mechanism to recheck consistency as clusters grow, unlike MaskClustering's iterative merging. We could not
+  evaluate an iterative fusion variant due to compute constraints.
+- **Candidate filtering caps recall.** Discarding true positive pairs bounds achievable recall regardless of
+  scorer quality.
+- **Narrow evaluation.** One small synthetic dataset, one LoRA recipe. Replica's smooth, dense camera
+  trajectories make the geometric baseline unusually strong, likely understating the value of semantic evidence
+  on sparser real-world captures.
+
+## Repository structure
 
 | Milestone | Directory | Contents |
 |---|---|---|
 | 1 - Baseline | `Project/Milestone 1/` | MaskClustering reproduction on Replica (notebooks) |
-| 2 - Mask backbone | `Project/Milestone 2/` | CropFormer vs. SAM (ViT-H) vs. SAM3 comparison; CropFormer wins and is used from here on |
-| 3 - Semantic edge scorer | `Project/Milestone_3/` | Candidate-pair filtering, Qwen3-VL scoring (zero-shot and LoRA fine-tuned), fine-tuning code |
-| 4 - Fusion | `Project/Milestone_4/` | MLP fusing one semantic and five geometric features into a single edge score, plus the qualitative render script |
+| 2 - Mask backbone | `Project/Milestone 2/` | CropFormer vs SAM (ViT-H) vs SAM3 comparison |
+| 3 - Semantic edge scorer | `Project/Milestone_3/` | Candidate-pair filtering, Qwen3-VL scoring (zero-shot and LoRA), fine-tuning code |
+| 4 - Fusion | `Project/Milestone_4/` | Fusion MLP, qualitative render script |
 
 `MaskClustering/` is the upstream baseline (graph construction, clustering, evaluation).
 
-## Running the Milestone 1 pipeline end-to-end
+## Setup
 
-Everything (CropFormer 2D masks → MaskClustering → CLIP features → semantic labels → evaluation) runs from a single notebook. Setup is a one-time thing per person; you don't need to repeat it every time you want to run the pipeline.
+Everything from CropFormer 2D masks through MaskClustering, CLIP features and evaluation runs from a single
+notebook. Setup is one-time per machine.
 
-### 1. SSH into the cluster and grab a GPU
+### 1. Get a GPU
 
 ```bash
 ssh <you>@ml3d.vc.in.tum.de
 salloc --gpus=1
 ```
-Requires TUM eduVPN if you're off-campus. `salloc` gives you an interactive session on one of the compute nodes (max 8h).
 
-### 2. Clone the repo and run the setup script (one-time)
+Requires TUM eduVPN off-campus. `salloc` gives an interactive session on a compute node (max 8h). Anything using
+CUDA must run on a GPU node; the login node is CPU-only.
+
+### 2. Clone and install
 
 ```bash
 git clone https://github.com/sametd04/ML3D-VLM_based_2D_mask_grouping.git
@@ -41,193 +128,91 @@ cd ML3D-VLM_based_2D_mask_grouping
 bash setup_env.sh
 ```
 
-This creates the `maskclustering` conda env and installs everything needed: PyTorch (CUDA 11.8), pytorch3d, detectron2, CropFormer (cloned and built under `MaskClustering/third_party/`, which is gitignored — that's why every person has to build it locally instead of getting it from git), and the rest of `requirements.txt`. It takes a while (pytorch3d builds from source) — that's normal. It's safe to re-run if it gets interrupted, it skips whatever's already done.
+Creates the `maskclustering` conda env with PyTorch (CUDA 11.8), pytorch3d, detectron2, CropFormer (built under
+`MaskClustering/third_party/`, gitignored) and `requirements.txt`. It takes a while because pytorch3d builds
+from source. Safe to re-run if interrupted; it skips completed steps.
 
-### 3. Get access to the CropFormer checkpoint (one-time)
+### 3. CropFormer checkpoint
 
-The checkpoint lives in a **gated** HuggingFace dataset, so this step can't be scripted — each person needs their own access grant:
-1. Log in / sign up and request access at https://huggingface.co/datasets/qqlu1992/Adobe_EntitySeg (click to accept the terms)
+The checkpoint is in a **gated** HuggingFace dataset, so each person needs their own access grant:
+
+1. Request access at https://huggingface.co/datasets/qqlu1992/Adobe_EntitySeg and accept the terms
 2. Create a token at https://huggingface.co/settings/tokens
-3. On the cluster, run `hf auth login` and paste the token
+3. Run `hf auth login` on the cluster and paste it
 
-The CropFormer/Mask2Former weights used by the project are expected at:
-
-```text
-checkpoints/Mask2Former_hornet_3x_576d0b.pth
-```
-
-The `checkpoints/` directory should remain inside the repository working
-directory because the CropFormer notebooks and scripts load the model from
-this local path. The checkpoint is approximately 883 MB and is a local runtime
-dependency, not source code. Keep it on every machine or cluster workspace on
-which CropFormer is executed, but do not commit or upload the weight file to
-Git. After cloning the repository, create `checkpoints/` and place the
-downloaded checkpoint there if it is not downloaded automatically.
-
-The expected layout is:
+Model weights are runtime dependencies and are deliberately not committed. Expected layout:
 
 ```text
 ML3D-VLM_based_2D_mask_grouping/
-|-- checkpoints/
-|   |-- Mask2Former_hornet_3x_576d0b.pth
-|   |-- qwen/
-|   |   `-- checkpoint-822/
-|   |       |-- adapter_config.json
-|   |       `-- adapter_model.safetensors
-|   `-- fusion_mlp/
-|       `-- fusion_mlp_fused.pt
-|-- MaskClustering/
-|-- Project/
-`-- README.md
+├── checkpoints/
+│   ├── Mask2Former_hornet_3x_576d0b.pth      # CropFormer, ~883 MB, public
+│   ├── qwen/checkpoint-822/                   # LoRA adapter + classification head
+│   │   ├── adapter_config.json
+│   │   └── adapter_model.safetensors
+│   └── fusion_mlp/fusion_mlp_fused.pt         # state dict + feature defs + norm stats
+├── MaskClustering/
+├── Project/
+└── docs/
 ```
 
-If you skip this, you can still run the pipeline with `MASK_PREDICTOR = 'sam'` in the notebook, using pre-generated SAM masks instead.
+To skip the gated checkpoint entirely, set `MASK_PREDICTOR = 'sam'` in the notebook and use pre-generated SAM
+masks. The two project-trained checkpoints (Qwen adapter, fusion MLP) have no public download location; get them
+from a team member or regenerate them with the Milestone 3 and 4 training code.
 
-### 3.1 Project-trained Qwen and Fusion-MLP checkpoints
+### 4. Replica dataset
 
-In addition to the public CropFormer weights, the later milestones use two
-checkpoints trained within this project. These are internal project artifacts
-and currently do not have a public download location. Obtain them from a team
-member or regenerate them with the corresponding Milestone 4 training code.
+Inside `MaskClustering/`, each scene (`office0`-`office4`, `room0`-`room2`) needs `color/`, `depth/`, `poses/`,
+`intrinsics.txt` and `{scene}_mesh.ply`, with ground truth at `data/replica/ground_truth/`.
 
-#### Fine-tuned Qwen3-VL adapter
+### 5. Run
 
-The Qwen checkpoint contains the LoRA adapters for the final eight vision
-blocks, the adapted vision patch merger, and the trained binary classification
-head. Store the complete training checkpoint at:
-
-```text
-checkpoints/qwen/checkpoint-822/
-```
-
-For inference, the essential files are:
-
-```text
-checkpoints/qwen/checkpoint-822/adapter_config.json
-checkpoints/qwen/checkpoint-822/adapter_model.safetensors
-```
-
-Keep the remaining files (`optimizer.pt`, `scheduler.pt`, `trainer_state.json`,
-`training_args.bin`, and `rng_state.pth`) if training may be resumed. They are
-not required for inference alone.
-
-#### Fusion MLP
-
-The Fusion MLP combines the fine-tuned Qwen same-instance score with geometric
-features such as view consensus, observer count, depth IoU, and directional
-overlap. Store its checkpoint at:
-
-```text
-checkpoints/fusion_mlp/fusion_mlp_fused.pt
-```
-
-The `.pt` file contains the trained state dictionary together with the feature
-definition, normalization statistics, hidden dimension, and dropout setting
-needed for inference.
-
-The Milestone 3 and 4 scoring and inference code expects both project-trained
-checkpoints at the locations above. When running on the cluster, reproduce the
-same directory structure below the cluster-side repository root.
-
-As with the CropFormer weights, these model artifacts are local runtime
-dependencies and should not be committed to Git. Only the training and
-inference code, lightweight configurations, and documentation should be
-version controlled.
-
-### 4. Make sure the Replica dataset is in place
-
-Inside `MaskClustering/`, each scene folder (`office0`–`office4`, `room0`–`room2`) needs `color/`, `depth/`, `poses/`, `intrinsics.txt`, `{scene}_mesh.ply`, plus ground truth at `data/replica/ground_truth/`.
-
-### 5. Launch Jupyter and tunnel in
-
-On the cluster:
 ```bash
 conda activate maskclustering
 cd MaskClustering
 jupyter notebook --no-browser --ip=0.0.0.0 --port 8888
 ```
 
-On your **local** machine, open a new terminal and tunnel in (the notebook's Cell 2 prints the exact command with your actual node name — use that):
+Tunnel in from your local machine (Cell 2 of the notebook prints the command with the real node name):
+
 ```bash
 ssh -L 8888:<node>.vc.in.tum.de:8888 <you>@ml3d.vc.in.tum.de
 ```
-Then open http://localhost:8888. Make sure the notebook's kernel is set to "Python (maskclustering)".
 
-### 6. Run the notebook
+Open `Project/Milestone 1/maskclustering_pipeline.ipynb` and run top to bottom: 2D mask prediction → clustering →
+class-agnostic evaluation → CLIP visual and text features → semantic labels → class-aware evaluation. Each step
+validates its prerequisites and names the earlier step to run if something is missing.
 
-Open `Project/Milestone 1/maskclustering_pipeline.ipynb` and run all cells top to bottom:
-
-| Step | What it does |
-|------|-------------|
-| 0 | 2D mask prediction (CropFormer, auto-downloads the checkpoint) |
-| 1 | Mask clustering — backproject 2D masks to 3D, build mask graph, cluster |
-| 2 | Class-agnostic evaluation |
-| 3 | CLIP visual feature extraction |
-| 4 | CLIP text feature extraction |
-| 5 | Semantic label assignment |
-| 6 | Class-aware evaluation (baseline mAP) |
-
-Every step checks its own prerequisites first and raises a clear error telling you exactly what's missing and which earlier step to run if something's off — if a cell fails, read the error message before asking around.
-
-## Milestone 2: comparing 2D mask backbones
-
-The clustering quality is bounded by the input 2D masks, so the backbone is fixed first. Generate masks with
-each candidate segmenter and run the same clustering on top:
+## Reproducing the later milestones
 
 ```bash
-python "Project/Milestone 2/run_sam_masks.py"    # SAM (ViT-H)
-python "Project/Milestone 2/run_sam3_masks.py"   # SAM3 (text-prompted)
+# Milestone 2: mask backbones
+python "Project/Milestone 2/run_sam_masks.py"                    # SAM (ViT-H)
+python "Project/Milestone 2/run_sam3_masks.py"                   # SAM3 (text-prompted)
 python "Project/Milestone 2/convert_sam_to_maskclustering.py"
-```
+bash  "Project/Milestone 2/setup_sam3_env.sh"                    # SAM3 needs a newer PyTorch
 
-SAM3 needs its own environment because it requires a newer PyTorch than the rest of the project:
+# Milestone 3: Qwen3-VL edge scorer
+python Project/Milestone_3/build_qwen_candidates.py               # candidate pairs + geometric features
+python Project/Milestone_3/candidates_to_pool.py                  # candidates -> pair pool
+python Project/Milestone_3/score_qwen_candidates.py               # Qwen3-VL P(same instance)
 
-```bash
-bash "Project/Milestone 2/setup_sam3_env.sh"
-```
-
-CropFormer produced the most instance-coherent masks and the best downstream AP, so it is the backbone for
-Milestones 3 and 4.
-
-## Milestone 3: Qwen3-VL as a semantic edge scorer
-
-Scoring every mask pair with a VLM is quadratic in the number of masks, so a permissive geometric filter
-selects candidate pairs first and the VLM is only queried on those:
-
-```bash
-python Project/Milestone_3/build_qwen_candidates.py   # candidate pairs + geometric features
-python Project/Milestone_3/candidates_to_pool.py      # candidates -> pair pool
-python Project/Milestone_3/score_qwen_candidates.py   # Qwen3-VL P(same instance)
-```
-
-Fine-tuning and its evaluation live in `fine_tuning.py` and `evaluate.py`; see
-[Project/Milestone_3/README.md](Project/Milestone_3/README.md) for the environment setup (the geometry and
-Qwen phases need separate virtual environments) and [Fine_Tuning.md](Project/Milestone_3/Fine_Tuning.md) for
-the pair building, sampling and training design.
-
-## Milestone 4: fusion MLP
-
-`Project/Milestone_4/fusion_mlp.py` trains a small MLP that fuses the Qwen same-instance probability with
-five geometric features (view consensus, observation count, depth IoU, and both directional overlaps) into a
-single edge score, which then replaces view consensus in the same clustering step. Because it consumes a
-pre-computed Qwen score, fusion adds no extra VLM inference cost at clustering time.
-
-See [Project/Milestone_4/README.md](Project/Milestone_4/README.md) for training and inference details.
-
-`render_clusters.py` renders predicted 3D instances from a scene mesh and one or more prediction `.npz` files,
-so clustering variants can be compared side by side from a fixed viewpoint:
-
-```bash
+# Milestone 4: qualitative renders
 python Project/Milestone_4/render_clusters.py \
     --mesh room2_mesh.ply \
     --pred baseline=path/to/baseline/room2.npz fused=path/to/fused/room2.npz \
     --out-dir renders/
 ```
 
-## Notes
+Fine-tuning lives in `Project/Milestone_3/fine_tuning.py` and `evaluate.py`; see
+[Milestone_3/README.md](Project/Milestone_3/README.md) for the two required virtual environments and
+[Fine_Tuning.md](Project/Milestone_3/Fine_Tuning.md) for pair building, sampling and training design. Fusion
+training and inference details are in [Milestone_4/README.md](Project/Milestone_4/README.md).
 
-- Anything using CUDA must run on a GPU node; the login node is CPU-only.
-- Model weights (CropFormer, Qwen adapters, fusion MLP) are runtime dependencies and are deliberately not
-  committed. See the checkpoint layout above.
-- This repository contains the code only. The report and poster are submitted separately as PDFs, and cluster
-  job scripts are not version controlled because they contain machine-specific paths.
+## References
+
+- Yan et al. *MaskClustering: View Consensus based Mask Graph Clustering for Open-Vocabulary 3D Instance
+  Segmentation.* CVPR 2024.
+- Qi et al. *High Quality Entity Segmentation* (CropFormer). ICCV 2023.
+- Kirillov et al. *Segment Anything.* ICCV 2023.
+- Qwen Team. *Qwen3-VL Technical Report.* 2025.
+- Straub et al. *The Replica Dataset: A Digital Replica of Indoor Spaces.* 2019.
