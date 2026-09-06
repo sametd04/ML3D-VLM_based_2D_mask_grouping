@@ -13,10 +13,7 @@ too few frames and over-merges spatially co-located ones, because it has no noti
 **Research question: can semantic evidence from a vision-language model improve geometric mask grouping,
 without an expensive pairwise VLM call for every candidate pair?**
 
-We compare five edge scorers under an identical CropFormer mask backbone and identical downstream clustering, so
-differences are attributable to the edge score alone: the geometric baseline, zero-shot Qwen3-VL, LoRA
-fine-tuned Qwen3-VL, a simple average of the two, and a learned fusion MLP over one semantic and five geometric
-features.
+We compare five edge scorers under an identical CropFormer mask backbone and the same downstream clustering implementation; the baseline uses MaskClustering's iterative refinement, while semantic variants are evaluated in a single pass unless stated otherwise.
 
 ## Results
 
