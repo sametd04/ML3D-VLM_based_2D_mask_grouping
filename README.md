@@ -28,7 +28,7 @@ fusion MLP used a leak-free train/val/test split, so neither model saw `room2` o
 | View consensus (baseline, iterative) | 0.082 | 0.189 | 0.423 | **0.128** | **0.265** | **0.432** |
 | Qwen zero-shot | 0.019 | 0.032 | 0.105 | 0.013 | 0.046 | 0.155 |
 | Qwen fine-tuned (LoRA) | 0.010 | 0.010 | 0.091 | 0.016 | 0.056 | 0.113 |
-| Average (Qwen + consensus) | 0.075 | 0.191 | 0.430 | 0.128 | 0.265 | 0.432 |
+| Average (Qwen + consensus) | 0.075 | 0.191 | 0.430 | **0.128** | **0.265** | **0.432** |
 | **Fusion MLP (geo + Qwen)** | **0.083** | **0.205** | **0.441** | 0.127 | 0.262 | 0.427 |
 
 **This is a negative result, reported as one.** The fusion MLP is the only semantic-aware variant competitive
